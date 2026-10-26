@@ -59,7 +59,19 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp "target/$TARGET/release/infrarust" /usr/local/bin/infrarust && \
     echo "Build completed successfully"
 
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/usr/crates/infrarust/plugins/infrarust-plugin-floodgate/wasm/target \
+    rustup target add wasm32-wasip2 && \
+    cargo build --release \
+      --manifest-path plugins/infrarust-plugin-floodgate/wasm/Cargo.toml \
+      --target wasm32-wasip2 && \
+    install -D -m 0644 \
+      plugins/infrarust-plugin-floodgate/wasm/target/wasm32-wasip2/release/infrarust_plugin_floodgate_wasm.wasm \
+      /usr/local/share/infrarust/plugins/floodgate.wasm
+
 RUN mkdir -p /image-root/app/cache/wasm && \
+    mkdir -p /image-root/app/plugins/floodgate && \
     chown -R 65532:65532 /image-root/app/cache && \
     chmod 0700 /image-root/app/cache /image-root/app/cache/wasm
 
@@ -69,6 +81,7 @@ FROM scratch AS runtime
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/local/bin/infrarust /sbin/infrarust
 COPY --from=builder /image-root/app /app
+COPY --from=builder /usr/local/share/infrarust/plugins/floodgate.wasm /app/plugins/floodgate.wasm
 
 WORKDIR /app
 VOLUME ["/app/config"]
@@ -78,4 +91,4 @@ EXPOSE 8080
 USER 65532:65532
 
 ENTRYPOINT ["/sbin/infrarust"]
-CMD ["--config", "/app/config/infrarust.toml", "--plugins-dir", "/app/config/plugins", "--servers-dir", "/app/config/servers"]
+CMD ["--config", "/app/config/infrarust.toml", "--plugins-dir", "/app/plugins", "--servers-dir", "/app/config/servers"]
