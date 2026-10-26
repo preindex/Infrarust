@@ -1,0 +1,45 @@
+name: Floodgate staging image
+
+on:
+  push:
+    branches:
+      - codex/floodgate-compat
+    paths:
+      - Dockerfile
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - plugins/infrarust-plugin-floodgate/**
+      - .github/workflows/floodgate-staging-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish staging image
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository }}:floodgate-staging
+          build-args: |
+            RUST_VERSION=1.99.0
+            ALPINE_VERSION=3.24
