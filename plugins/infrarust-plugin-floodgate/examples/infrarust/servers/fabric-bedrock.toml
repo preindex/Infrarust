@@ -1,0 +1,38 @@
+# Example server file for the Floodgate MVP: one Fabric backend reached through
+# client_only mode. Place it in servers_dir (default ./servers/). The file
+# name becomes the server id unless `name` or `id` is set.
+#
+# Keys are checked against crates/infrarust_config/src/server.rs (beta.4).
+
+# Human-readable id. Must match [a-z0-9_-]+.
+name = "fabric-bedrock"
+
+# Domains that route here. The Geyser `remote.address` must produce this exact
+# host in the Java handshake, so keep the two values in sync. This has been
+# inferred from how the handshake is parsed in the source, not run end to end.
+domains = ["REPLACE-mc.example.com"]
+
+# The Fabric backend. It must run with online-mode=false. Use a private address
+# only the proxy can reach.
+addresses = ["REPLACE-10.66.0.10:25565"]
+
+# client_only: the proxy performs Mojang auth itself and the backend runs offline.
+proxy_mode = "client_only"
+
+# No PROXY protocol to the backend. The Fabric backend does not expect it.
+send_proxy_protocol = false
+
+# Replace the handshake host before it reaches the backend. This keeps the
+# Floodgate blob (everything after the first NUL in the hostname) out of the
+# backend. The rewrite keeps only Forge markers, so anything else is dropped.
+# Choose "from_backend" to reuse the backend address, or this explicit form.
+# DomainRewrite::None would forward the original bytes, blob included.
+domain_rewrite = { explicit = "REPLACE-backend.internal" }
+
+max_players = 100
+disconnect_message = "Bedrock bridge is offline. Try again later."
+
+[timeouts]
+connect = "3s"
+read = "30s"
+write = "30s"

@@ -20,3 +20,5 @@ bans.audit.json
 bans.json
 crates/infrarust-core/registry/*.json
 /cache/
+**/key.pem
+/plugins/floodgate/config.toml
