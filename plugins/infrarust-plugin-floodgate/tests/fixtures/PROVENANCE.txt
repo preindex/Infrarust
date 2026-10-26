@@ -1,0 +1,47 @@
+PROVENANCE: floodgate_handshake_v0.json
+
+Type:        SYNTHETIC deterministic reference / differential vector.
+             NOT captured from a live Geyser or Floodgate instance.
+             Contains no real player, account, or private data.
+
+Test key:    00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f  (AES-128, raw bytes)
+             TEST-ONLY. Never use outside tests.
+Test IV:     a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab  (12 bytes, no AAD)
+
+Framing source (verified 2026-10-26 against GeyserMC/Geyser master, the
+repository that vendors Floodgate's common module):
+  common/src/main/java/org/geysermc/floodgate/util/BedrockData.java
+    sha256 c2fbce86c69b295414621a5ab4cbe7d8970dcc89f59f9d990d0c100926cadc60
+  common/src/main/java/org/geysermc/floodgate/crypto/AesCipher.java
+    sha256 ce78b4191851b6300196d025df54d235c932f815579ef6044a70ed19d8cfd580
+  common/src/main/java/org/geysermc/floodgate/crypto/FloodgateCipher.java
+    sha256 f68b7f272e25e8c40a71cec9e991f90e12bd80ed9b179f76ae972e4d6d44ed57
+  common/src/main/java/org/geysermc/floodgate/crypto/Base64Topping.java
+    sha256 20152654915f92ebb63489f7ed6a717917988ecadcb87513bb5e3b88d7a21613
+Consumer side (GeyserMC/Floodgate, HEAD 81b65ccb):
+  core/.../player/FloodgateHandshakeHandler.java  (NUL split, marker detection, 12-field check)
+  core/.../config/... username-prefix "." and replace-spaces true (config.yml defaults)
+  Utils.getJavaUuid: new UUID(0, xuid)
+
+Facts encoded:
+  * Marker: "^Floodgate^" + char(0x3E) = "^Floodgate^>"  (the ">" is 0x3E, not an HTML entity)
+  * BedrockData: 12 NUL-separated fields in order: version, username, xuid,
+    deviceOs, languageCode, uiProfile, inputMode, ip, linkedPlayer, fromProxy,
+    subscribeId, verifyCode. Unlinked => literal "null". fromProxy => "0"/"1".
+  * Wire: "^Floodgate^>" + b64(iv) + "!" + b64(ciphertext || 16-byte GCM tag)
+  * Handshake host = hostname + "\0" + wire
+
+Expected outputs (in the JSON):
+  prefixed username ".Bedrock_User" (raw "Bedrock User"), XUID 2535400000000001,
+  UUID 00000000-0000-0000-0009-01eed05d1001.
+
+Not verified in this run (state these as open):
+  * The exact Java call site applying the username prefix/space replacement
+    (config keys confirmed; the code path was not line-verified).
+  * The 255-char Minecraft Handshake server-address limit is taken from the
+    protocol documentation (wiki.vg), not re-checked against a live client.
+  * The Java sources were not compiled or executed. Independence rests on a
+    Python re-implementation of the framing plus cryptography's hazmat GCM.
+
+Regenerate: python tools/generate_floodgate_fixture.py
+Verify:     python tools/verify_floodgate_fixture.py

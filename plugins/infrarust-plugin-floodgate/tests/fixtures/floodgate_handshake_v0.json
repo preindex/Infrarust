@@ -1,0 +1,91 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "description": "Synthetic, deterministic differential fixture. NOT captured from a live Geyser/Floodgate instance. Contains no real player data.",
+    "generator": "tools/generate_floodgate_fixture.py",
+    "framing_source": "GeyserMC/Geyser common/src/main/java/org/geysermc/floodgate/{util/BedrockData,crypto/AesCipher,crypto/FloodgateCipher,crypto/Base64Topping}.java (master, fetched 2026-10-26)",
+    "primitive": "AES-128-GCM via python cryptography AESGCM (independent of the Java sources)"
+  },
+  "key": {
+    "hex": "000102030405060708090a0b0c0d0e0f",
+    "length_bytes": 16,
+    "encoding": "raw bytes (Geyser AesKeyProducer.produceFrom -> SecretKeySpec)",
+    "test_only": true
+  },
+  "iv": {
+    "hex": "a0a1a2a3a4a5a6a7a8a9aaab",
+    "length_bytes": 12,
+    "tag_bits": 128,
+    "aad": null
+  },
+  "framing": {
+    "header": "^Floodgate^>",
+    "header_hex": "5e466c6f6f64676174655e3e",
+    "splitter": "!",
+    "splitter_byte": 33,
+    "iv_encoding": "base64 (standard, padded)",
+    "payload_encoding": "base64 of ciphertext||16-byte-tag",
+    "wire_format": "HEADER + b64(iv) + '!' + b64(ciphertext||tag)"
+  },
+  "hostname": "play.example.test",
+  "raw_handshake_host": "play.example.test\u0000^Floodgate^>oKGio6Slpqeoqaqr!2f9WzxbsR2PpVdNpPmbFEjbDEgjBclndSnMauxf+6tqakXACOt7cXU/u0vSf6zngjVR9SVbvybjRNr7K1GU1RMkfhuNFR6Hy/iSP3CxFKYB8uWouDJjl1Xl+XVHJVXoldIIYZaxkw3spilz5sr+3g8XF8MM=",
+  "raw_handshake_host_repr": "play.example.test\\0^Floodgate^>oKGio6Slpqeoqaqr!2f9WzxbsR2PpVdNpPmbFEjbDEgjBclndSnMauxf+6tqakXACOt7cXU/u0vSf6zngjVR9SVbvybjRNr7K1GU1RMkfhuNFR6Hy/iSP3CxFKYB8uWouDJjl1Xl+XVHJVXoldIIYZaxkw3spilz5sr+3g8XF8MM=",
+  "plaintext_bedrock_data": "synthetic-fixture-1\u0000Bedrock User\u00002535400000000001\u00001\u0000en_US\u00000\u00001\u0000198.51.100.7\u0000null\u00000\u00000\u0000synthetic-verify",
+  "plaintext_bedrock_data_repr": "synthetic-fixture-1\\0Bedrock User\\02535400000000001\\01\\0en_US\\00\\01\\0198.51.100.7\\0null\\00\\00\\0synthetic-verify",
+  "expectations": {
+    "field_count": 12,
+    "fields": {
+      "version": "synthetic-fixture-1",
+      "username": "Bedrock User",
+      "xuid": "2535400000000001",
+      "deviceOs": "1",
+      "languageCode": "en_US",
+      "uiProfile": "0",
+      "inputMode": "1",
+      "ip": "198.51.100.7",
+      "linkedPlayer": "null",
+      "fromProxy": "0",
+      "subscribeId": "0",
+      "verifyCode": "synthetic-verify"
+    },
+    "linked_player_present": false,
+    "from_proxy": false,
+    "xuid": "2535400000000001",
+    "uuid": "00000000-0000-0000-0009-01eed05d1001",
+    "uuid_derivation": "new UUID(0, xuid) (Floodgate Utils.getJavaUuid)",
+    "raw_username": "Bedrock User",
+    "expected_prefixed_username": ".Bedrock_User",
+    "username_derivation": "prefix '.' + space->'_' per Floodgate config.yml defaults; call site not line-verified in this run"
+  },
+  "length_calculator": {
+    "appended_tail_length_formula": "1 + len(wire)",
+    "cases": {
+      "short": {
+        "hostname": "play.example.test",
+        "hostname_length": 17,
+        "appended_tail_length": 186,
+        "total_length": 203,
+        "fits_protocol_limit_255": true
+      },
+      "near_limit_fits": {
+        "hostname": "long-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
+        "hostname_length": 69,
+        "appended_tail_length": 186,
+        "total_length": 255,
+        "fits_protocol_limit_255": true
+      },
+      "near_limit_exceeds": {
+        "hostname": "long-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.testb",
+        "hostname_length": 70,
+        "appended_tail_length": 186,
+        "total_length": 256,
+        "fits_protocol_limit_255": false
+      }
+    }
+  },
+  "negative_cases": {
+    "wrong_key_hex": "fffefdfcfbfaf9f8f7f6f5f4f3f2f1f0",
+    "missing_marker_host": "play.example.test\u0000not-floodgate-data",
+    "eleven_field_plaintext_note": "BedrockData.fromString rejects non-12 field counts (EXPECTED_LENGTH)"
+  }
+}

@@ -20,6 +20,7 @@ members = [
     "plugins/infrarust-plugin-admin-api",
     "plugins/infrarust-plugin-stats",
     "plugins/infrarust-plugin-stats/native",
+    "plugins/infrarust-plugin-floodgate",
     "tools/registry-extractor",
     "tools/stress-test",
     "tools/mc-bench",
@@ -27,6 +28,7 @@ members = [
 exclude = [
     "crates/infrarust-loader-wasm/tests/fixtures",
     "plugins/infrarust-plugin-stats/wasm",
+    "plugins/infrarust-plugin-floodgate/wasm",
     "templates/plugin-template",
 ]
 

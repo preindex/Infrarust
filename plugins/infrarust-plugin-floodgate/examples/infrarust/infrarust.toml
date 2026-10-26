@@ -1,0 +1,42 @@
+# Example proxy config for the Floodgate MVP topology:
+#   Bedrock player -> Geyser Standalone -> Infrarust (client_only) -> Fabric backend
+#
+# Every key below is checked against the beta.4 config structs in
+# crates/infrarust_config/src/proxy.rs. Unknown keys are rejected at load time
+# (deny_unknown_fields), so do not add keys the structs do not define.
+#
+# Placeholders are written as <ANGLE_BRACKETS> or as "REPLACE-..." values.
+# The plugin id "floodgate" is the id the WASM adapter registers
+# (wasm/src/lib.rs, #[plugin(id = "floodgate")]), so [plugins.floodgate] must use it.
+# The adapter's own settings live in <plugins_dir>/floodgate/config.toml
+# (see examples/infrarust/plugin-config.toml.example), not in this file.
+
+# Public address the proxy listens on. Keep this on the private overlay/service
+# network interface, not on a public address (see the README, "Network boundary").
+bind = "10.66.0.2:25565"
+
+# Must stay false for this topology. It is a single global bool with no
+# per-source trust list, so enabling it would make every connection to the bind
+# address require a PROXY header. Geyser is not sending one here.
+receive_proxy_protocol = false
+
+servers_dir = "./servers"
+plugins_dir = "./plugins"
+
+# Per-plugin settings. Java online auth still runs unchanged in client_only mode;
+# the plugin only changes how a Floodgate-verified login is admitted.
+#
+# The plugin only needs one extra capability: filesystem-extended, which allows
+# the read-only key mount below. It gets no network grant. Baseline capabilities
+# are granted by default.
+[plugins.floodgate]
+permissions = ["filesystem-extended"]
+enabled = true
+
+# The key directory is mounted read-only into the guest at /keys. The mount
+# has to be a DIRECTORY that contains only the key file, not the key file
+# itself. The host path below is a placeholder. Keep it outside the repo.
+[[plugins.floodgate.wasm.mounts]]
+host = "<HOST_KEY_DIR_OUTSIDE_REPO>"   # e.g. /etc/infrarust/floodgate-key (dir with only key.pem)
+guest = "/keys"
+read_only = true

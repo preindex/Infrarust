@@ -1,0 +1,26 @@
+[package]
+name = "infrarust-plugin-floodgate-wasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+infrarust-plugin-floodgate = { path = "../" }
+infrarust-plugin-sdk = { path = "../../../crates/infrarust-plugin-sdk" }
+ipnet = { version = "2.12.2", features = ["serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.6"
+
+[workspace]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
