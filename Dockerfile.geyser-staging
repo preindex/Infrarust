@@ -1,0 +1,21 @@
+FROM docker.io/library/eclipse-temurin:21-jre-alpine
+
+ARG GEYSER_VERSION=2.12.0
+ARG GEYSER_BUILD=1271
+ARG GEYSER_SHA256=df30afb9970f3a71291ee6c96b5fb21e59fbf6d48a3c0c3f4877fcb096c4e314
+
+RUN apk add --no-cache ca-certificates curl \
+    && mkdir -p /opt/geyser /data \
+    && curl -fsSL \
+      "https://download.geysermc.org/v2/projects/geyser/versions/${GEYSER_VERSION}/builds/${GEYSER_BUILD}/downloads/standalone" \
+      -o /opt/geyser/Geyser-Standalone.jar \
+    && echo "${GEYSER_SHA256}  /opt/geyser/Geyser-Standalone.jar" | sha256sum -c - \
+    && addgroup -S -g 10001 geyser \
+    && adduser -S -D -H -u 10001 -G geyser geyser \
+    && chown -R 10001:10001 /data /opt/geyser \
+    && apk del curl
+
+WORKDIR /data
+USER 10001:10001
+EXPOSE 19133/udp
+ENTRYPOINT ["java", "-Xms128M", "-Xmx512M", "-jar", "/opt/geyser/Geyser-Standalone.jar"]
