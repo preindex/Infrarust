@@ -72,6 +72,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 RUN mkdir -p /image-root/app/cache/wasm && \
     mkdir -p /image-root/app/plugins/floodgate && \
+    chown -R 65532:65532 /image-root/app/plugins && \
     chown -R 65532:65532 /image-root/app/cache && \
     chmod 0700 /image-root/app/cache /image-root/app/cache/wasm
 
