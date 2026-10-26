@@ -6,6 +6,7 @@ on:
       - codex/floodgate-compat
     paths:
       - Dockerfile
+      - Dockerfile.geyser-staging
       - Cargo.toml
       - Cargo.lock
       - crates/**
@@ -37,7 +38,7 @@ jobs:
         id: image
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and publish staging image
+      - name: Build and publish Infrarust staging image
         uses: docker/build-push-action@v7.4.0
         with:
           context: .
@@ -47,3 +48,17 @@ jobs:
           build-args: |
             RUST_VERSION=1.99.0
             ALPINE_VERSION=3.24
+
+      - name: Build and publish pinned Geyser staging image
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          file: Dockerfile.geyser-staging
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.name }}:geyser-floodgate-staging
+
+      - name: Make staging images pullable by the homelab
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api --method PATCH user/packages/container/infrarust/visibility --field visibility=public
