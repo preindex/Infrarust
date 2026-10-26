@@ -4,7 +4,7 @@ ARG GEYSER_VERSION=2.12.0
 ARG GEYSER_BUILD=1271
 ARG GEYSER_SHA256=df30afb9970f3a71291ee6c96b5fb21e59fbf6d48a3c0c3f4877fcb096c4e314
 
-RUN apk add --no-cache ca-certificates curl \
+RUN apk add --no-cache ca-certificates curl su-exec \
     && mkdir -p /opt/geyser /data \
     && curl -fsSL \
       "https://download.geysermc.org/v2/projects/geyser/versions/${GEYSER_VERSION}/builds/${GEYSER_BUILD}/downloads/standalone" \
@@ -15,7 +15,9 @@ RUN apk add --no-cache ca-certificates curl \
     && chown -R 10001:10001 /data /opt/geyser \
     && apk del curl
 
+COPY Dockerfile.geyser-staging-entrypoint.sh /usr/local/bin/geyser-entrypoint
+RUN chmod 0755 /usr/local/bin/geyser-entrypoint
+
 WORKDIR /data
-USER 10001:10001
 EXPOSE 19133/udp
-ENTRYPOINT ["java", "-Xms128M", "-Xmx512M", "-jar", "/opt/geyser/Geyser-Standalone.jar"]
+ENTRYPOINT ["/usr/local/bin/geyser-entrypoint"]
