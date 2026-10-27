@@ -32,7 +32,7 @@ impl ProxyServer {
             sm.initial_health_check().await;
             let player_counter: Arc<dyn infrarust_server_manager::PlayerCounter> =
                 Arc::clone(&self.services.connection_registry) as _;
-            let _monitoring_handles = sm.start_monitoring(player_counter, self.background.clone());
+            sm.start_monitoring(player_counter, self.background.clone());
             tracing::info!("server manager monitoring started");
         }
 

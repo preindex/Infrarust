@@ -1,7 +1,6 @@
 //! Per-server monitoring: adaptive polling and auto-shutdown.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use tokio_util::sync::CancellationToken;
 
@@ -15,12 +14,17 @@ const SLOW_POLL_FACTOR: u32 = 6;
 /// Per-server monitoring task.
 ///
 /// Polls the provider for status changes, notifies waiters on transitions,
-/// and triggers auto-shutdown when no players are connected.
+/// and triggers auto-shutdown when no players or demand are present.
+///
+/// The task belongs to one registration (`instance`). The service cancels
+/// `token` when the server is unregistered or replaced, and the task also exits
+/// if the registration no longer matches, so it never writes to a removed server.
 pub async fn monitor_server(
     service: Arc<ServerManagerService>,
     server_id: String,
+    instance: u64,
     player_counter: Arc<dyn PlayerCounter>,
-    shutdown: CancellationToken,
+    token: CancellationToken,
 ) {
     tracing::info!(server = %server_id, "monitoring task started");
 
@@ -35,35 +39,42 @@ pub async fn monitor_server(
 
         tokio::select! {
             biased;
-            () = shutdown.cancelled() => {
+            () = token.cancelled() => {
                 tracing::info!(server = %server_id, "monitoring task shutting down");
                 break;
             }
             () = tokio::time::sleep(interval) => {}
         }
 
+        // Capture the registration and generation before polling so a transition
+        // during the poll invalidates the result. A removed or replaced
+        // registration ends this task.
+        let Some(observed) = service
+            .observe(&server_id)
+            .filter(|observed| observed.instance == instance)
+        else {
+            break;
+        };
+
         // Skip polling if server is Crashed (wait for ensure_started)
-        if let Some(state) = service.get_state(&server_id)
-            && state == ServerState::Crashed
-        {
+        if observed.state == ServerState::Crashed {
             continue;
         }
 
-        // 1. Poll provider status, capturing the generation first so a
-        //    transition during the poll invalidates the result
-        let Some(generation) = service.generation(&server_id) else {
-            continue;
-        };
+        // 1. Poll provider status
         let new_status = match service.check_provider_status(&server_id).await {
             Ok(status) => status,
             Err(e) => {
-                tracing::warn!(server = %server_id, "status check failed: {e}");
+                tracing::warn!(server = %server_id, "status check failed, state is Unknown: {e}");
+                // Report Unknown rather than keeping a stale state. A failed
+                // poll never implies the server is empty, so no shutdown runs.
+                service.update_state(&server_id, ProviderStatus::Unknown, observed);
                 continue;
             }
         };
 
         // 2. Update state and detect transitions (drops the result if stale)
-        if let Some((_old, new_state)) = service.update_state(&server_id, new_status, generation) {
+        if let Some((_old, new_state)) = service.update_state(&server_id, new_status, observed) {
             match new_state {
                 ServerState::Online => {
                     service.notify_waiters(&server_id, &Ok(()));
@@ -95,50 +106,14 @@ pub async fn monitor_server(
             }
         }
 
-        // 3. Check auto-shutdown (only when confirmed Online; a stale Running
-        //    poll must not stop a server a manual op is transitioning)
-        if new_status == ProviderStatus::Running
-            && service.get_state(&server_id) == Some(ServerState::Online)
-        {
+        // 3. Auto-shutdown. The service re-checks demand, state and the
+        //    observation under its lock, so a connect that lands now either
+        //    holds demand (and cancels the stop) or is refused as Stopping.
+        if new_status == ProviderStatus::Running {
             let player_count = player_counter.count_by_server(&server_id);
-            check_auto_shutdown(&service, &server_id, player_count).await;
-        }
-    }
-}
-
-/// Checks if a server should be auto-shutdown due to inactivity.
-async fn check_auto_shutdown(service: &ServerManagerService, server_id: &str, player_count: usize) {
-    let should_stop = {
-        let Some(mut entry) = service.entries.get_mut(server_id) else {
-            return;
-        };
-
-        if player_count > 0 {
-            entry.last_player_seen = Some(Instant::now());
-            return;
-        }
-
-        let Some(shutdown_after) = entry.shutdown_after else {
-            return;
-        };
-
-        let Some(last_seen) = entry.last_player_seen else {
-            entry.last_player_seen = Some(Instant::now());
-            return;
-        };
-
-        let result = last_seen.elapsed() >= shutdown_after;
-        drop(entry);
-        result
-    };
-
-    if should_stop {
-        tracing::info!(
-            server = %server_id,
-            "auto-shutdown: no players for shutdown_after duration"
-        );
-        if let Err(e) = service.stop_server(server_id).await {
-            tracing::warn!(server = %server_id, "auto-shutdown failed: {e}");
+            service
+                .stop_if_idle(&server_id, observed, player_count)
+                .await;
         }
     }
 }

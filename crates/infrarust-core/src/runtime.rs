@@ -17,7 +17,7 @@ use infrarust_api::services::proxy_info::{
 use infrarust_api::services::server_manager::ServerManager;
 use infrarust_config::ProxyConfig;
 use infrarust_config::proxy::PluginConfig;
-use infrarust_server_manager::ServerProvider;
+use infrarust_server_manager::{LifecyclePolicy, ServerProvider};
 use infrarust_transport::Listener;
 
 use crate::error::CoreError;
@@ -260,13 +260,15 @@ fn register_server_providers(
                 provider.server_id
             )));
         }
-        manager.register_server(
-            provider.server_id,
-            provider.provider,
-            None,
-            provider.start_timeout,
-            provider.poll_interval,
-        );
+        manager
+            .register_server(
+                provider.server_id,
+                provider.provider,
+                LifecyclePolicy::default(),
+                provider.start_timeout,
+                provider.poll_interval,
+            )
+            .map_err(|e| CoreError::Startup(e.to_string()))?;
     }
     Ok(())
 }

@@ -417,6 +417,18 @@ impl PlayerSession {
         routing.current.clone().or_else(|| routing.pending.clone())
     }
 
+    /// Whether this player counts toward `server_id`.
+    ///
+    /// A transfer counts on both ends: the source it is leaving and the
+    /// destination it is joining, so neither is seen as idle mid-switch.
+    pub(crate) fn counts_toward(&self, server_id: &str) -> bool {
+        let routing = read(&self.routing);
+        [routing.current.as_ref(), routing.pending.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|server| server.as_str() == server_id)
+    }
+
     pub fn set_connected_address(&self, address: Option<ServerAddress>) {
         let mut guard = write(&self.connected_address);
         if *guard == address {
