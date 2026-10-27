@@ -37,6 +37,11 @@ poll_interval = "30s"
 reconnect_delay = "5s"
 ```
 
+`INFRARUST_DOCKER_MODE` and `INFRARUST_DOCKER_NETWORK` can override those two
+settings at startup. This is useful when the main TOML file is mounted as an
+immutable secret. The mode accepts `container` or `swarm`; Swarm mode still
+requires a network, from TOML or the environment.
+
 ## Container labels
 
 Infrarust scans for containers with the label `infrarust.enable=true`. All other labels are optional.
