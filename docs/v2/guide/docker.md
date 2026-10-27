@@ -24,12 +24,13 @@ The image exposes these ports:
 |------|---------|
 | `25565/tcp` | Infrarust Java proxy |
 | `25565/udp` | Native SVC listener (included by default) |
-| `19132/udp` | Geyser Bedrock listener |
+| `19132/udp` | Geyser Bedrock gameplay listener |
+| `19132/tcp` | Geyser NetherNet signaling (required for Bedrock 26.60+) |
 | `8080/tcp` | Web admin API and dashboard (optional, see below) |
 
-Publish TCP and UDP separately. This Docker image explicitly enables the optional `plugin-svc` Cargo feature, so its native SVC listener is on by default in the image (standalone builds must opt in). Publish `-p 25565:25565/tcp -p 25565:25565/udp -p 19132:19132/udp` for Java, voice chat, and Bedrock.
+Publish TCP and UDP separately. This Docker image explicitly enables the optional `plugin-svc` Cargo feature, so its native SVC listener is on by default in the image (standalone builds must opt in). Publish `-p 25565:25565/tcp -p 25565:25565/udp -p 19132:19132/tcp -p 19132:19132/udp` for Java, voice chat, and Bedrock. The Geyser config must set `bedrock.transport: nethernet` for Bedrock 26.60+; allow both TCP and UDP 19132 through any host firewall or router.
 
-Geyser requires a runtime config at `/app/config/geyser/config.yml`. Start from [`plugins/infrarust-plugin-floodgate/examples/geyser/config.yml`](https://github.com/shadowner/Infrarust/blob/main/plugins/infrarust-plugin-floodgate/examples/geyser/config.yml), set `remote.address` to `127.0.0.1`, and set `floodgate-key-file` to `/app/config/floodgate/key.pem`. Configure Infrarust to bind Java traffic on `0.0.0.0:25565`. Mount the same Floodgate key read-only for both services; never put the key in the image or source control.
+Geyser requires a runtime config at `/app/config/geyser/config.yml`. Start from [`plugins/infrarust-plugin-floodgate/examples/geyser/config.yml`](https://github.com/shadowner/Infrarust/blob/main/plugins/infrarust-plugin-floodgate/examples/geyser/config.yml), set `bedrock.transport: nethernet`, set `remote.address` to `127.0.0.1`, and set `floodgate-key-file` to `/app/config/floodgate/key.pem`. Configure Infrarust to bind Java traffic on `0.0.0.0:25565`. Mount the same Floodgate key read-only for both services; never put the key in the image or source control.
 
 The built-in SVC plugin reads `/app/plugins/svc-proxy/config.toml` because the Docker examples use `plugins_dir = "/app/plugins"`. Create this file as `./config/plugins/svc-proxy/config.toml` on the host and mount that directory at `/app/plugins/svc-proxy`. It listens on `0.0.0.0:25565/udp` by default, uses the client hostname as its public voice host when `public_voice_host` is empty, and sniffs each backend voice port from the SVC `voicechat:secret` channel. Set `backend_port_override` only when a backend needs a fixed port; `max_compatibility_version` defaults to `20`.
 
@@ -120,6 +121,7 @@ docker run -d \
   --name infrarust \
   -p 25565:25565/tcp \
   -p 25565:25565/udp \
+  -p 19132:19132/tcp \
   -p 19132:19132/udp \
   -v ./config:/app/config \
   -v ./secrets/floodgate:/app/config/floodgate:ro \
@@ -146,6 +148,7 @@ services:
     ports:
       - "25565:25565/tcp"
       - "25565:25565/udp"
+      - "19132:19132/tcp"
       - "19132:19132/udp"
     volumes:
       - ./config:/app/config
@@ -179,6 +182,7 @@ docker run -d \
   --name infrarust \
   -p 25565:25565/tcp \
   -p 25565:25565/udp \
+  -p 19132:19132/tcp \
   -p 19132:19132/udp \
   -e RUST_LOG=debug \
   -v ./config:/app/config \
@@ -200,6 +204,7 @@ services:
     ports:
       - "25565:25565/tcp"
       - "25565:25565/udp"
+      - "19132:19132/tcp"
       - "19132:19132/udp"
     volumes:
       - ./config:/app/config
@@ -246,6 +251,7 @@ services:
     ports:
       - "25565:25565/tcp"
       - "25565:25565/udp"
+      - "19132:19132/tcp"
       - "19132:19132/udp"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -291,6 +297,7 @@ services:
     ports:
       - "25565:25565/tcp"
       - "25565:25565/udp"
+      - "19132:19132/tcp"
       - "19132:19132/udp"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -350,6 +357,7 @@ services:
     ports:
       - "25565:25565/tcp"
       - "25565:25565/udp"
+      - "19132:19132/tcp"
       - "19132:19132/udp"
     volumes:
       - ./config:/app/config

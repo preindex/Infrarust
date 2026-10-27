@@ -84,9 +84,9 @@ RUN apk add --no-cache bash \
     && mkdir -p /app/config /app/geyser /app/plugins/floodgate /app/cache/wasm /opt/geyser \
     && chown -R 65532:65532 /app /opt/geyser
 
-ARG GEYSER_VERSION=2.12.0
-ARG GEYSER_BUILD=1271
-ARG GEYSER_SHA256=df30afb9970f3a71291ee6c96b5fb21e59fbf6d48a3c0c3f4877fcb096c4e314
+ARG GEYSER_VERSION=2.12.1
+ARG GEYSER_BUILD=1273
+ARG GEYSER_SHA256=1de33d692bfa94e43729cd7a288627721b10acaf6b43ee6453759ca6d4de2d38
 
 RUN apk add --no-cache curl \
     && curl -fsSL \
@@ -107,7 +107,7 @@ RUN chmod 0755 /usr/local/bin/container-entrypoint \
 
 WORKDIR /app
 VOLUME ["/app/config", "/app/geyser"]
-EXPOSE 25565/tcp 25565/udp 19132/udp 8080/tcp
+EXPOSE 25565/tcp 25565/udp 19132/tcp 19132/udp 8080/tcp
 
 USER 65532:65532
 
