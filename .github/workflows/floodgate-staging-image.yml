@@ -57,8 +57,3 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.image.outputs.name }}:geyser-floodgate-staging
-
-      - name: Make staging images pullable by the homelab
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh api --method PATCH user/packages/container/infrarust/visibility --field visibility=public
