@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-use infrarust_config::ProxyConfig;
+use infrarust_config::{DockerMode, ProxyConfig};
 use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
 use infrarust_core::services::config_service::ConfigServiceImpl;
 use infrarust_core::telemetry::formatter::InfrarustFormatter;
@@ -224,11 +224,42 @@ fn apply_cli_overrides(cli: &Cli, config: &mut ProxyConfig) {
     }
 }
 
+fn apply_docker_env_overrides(
+    config: &mut ProxyConfig,
+    mode: Option<&str>,
+    network: Option<&str>,
+) -> anyhow::Result<()> {
+    if mode.is_none() && network.is_none() {
+        return Ok(());
+    }
+
+    let docker = config.docker.get_or_insert_with(Default::default);
+    if let Some(mode) = mode {
+        docker.mode = match mode {
+            "container" => DockerMode::Container,
+            "swarm" => DockerMode::Swarm,
+            _ => {
+                anyhow::bail!("INFRARUST_DOCKER_MODE must be `container` or `swarm`, got `{mode}`")
+            }
+        };
+    }
+    if let Some(network) = network {
+        docker.network = Some(network.to_string());
+    }
+
+    Ok(())
+}
+
 fn finalize_config(
     cli: &Cli,
     mut config: ProxyConfig,
 ) -> anyhow::Result<(ProxyConfig, Vec<String>)> {
     apply_cli_overrides(cli, &mut config);
+    apply_docker_env_overrides(
+        &mut config,
+        std::env::var("INFRARUST_DOCKER_MODE").ok().as_deref(),
+        std::env::var("INFRARUST_DOCKER_NETWORK").ok().as_deref(),
+    )?;
     let warnings = infrarust_config::validate_proxy_config(&config)
         .context("configuration validation failed")?;
     Ok((config, warnings))
@@ -511,6 +542,28 @@ mod tests {
         assert_eq!(config.bind, "127.0.0.1:25577".parse().unwrap());
         assert_eq!(config.servers_dir, Path::new("/srv/mc"));
         assert_eq!(config.plugins_dir, Path::new("/srv/plugins"));
+    }
+
+    #[test]
+    fn docker_environment_overrides_enable_swarm_without_replacing_other_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = wizard_like_config(tmp.path());
+
+        apply_docker_env_overrides(&mut config, Some("swarm"), Some("minecraft")).unwrap();
+
+        let docker = config.docker.unwrap();
+        assert_eq!(docker.mode, DockerMode::Swarm);
+        assert_eq!(docker.network.as_deref(), Some("minecraft"));
+        assert_eq!(config.bind, "0.0.0.0:25565".parse().unwrap());
+        assert_eq!(config.web.unwrap().bind, "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn docker_environment_override_rejects_unknown_modes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = wizard_like_config(tmp.path());
+        let error = apply_docker_env_overrides(&mut config, Some("cluster"), None).unwrap_err();
+        assert!(error.to_string().contains("INFRARUST_DOCKER_MODE"));
     }
 
     #[cfg(feature = "telemetry")]
