@@ -25,7 +25,7 @@ pub use address::{DomainRewrite, ServerAddress};
 pub use auth::{AuthConfig, OfflineUuidPolicy};
 pub use balance::{BalanceConfig, BalanceStrategy, WeightedAddress};
 pub use ban::{BanConfig, BanProviderSelection};
-pub use docker::DockerProviderConfig;
+pub use docker::{DockerMode, DockerProviderConfig};
 pub use events::EventsConfig;
 pub use forwarding::{BungeeCordChannelPermissions, ForwardingConfig, ForwardingMode};
 pub use health::{ActiveHealthConfig, ProbeKind};

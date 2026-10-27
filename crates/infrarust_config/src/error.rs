@@ -164,6 +164,12 @@ pub enum ProxyValidationError {
     #[error("{key} must be greater than zero")]
     ZeroDuration { key: &'static str },
 
+    #[error(
+        "docker.network must name the overlay network when docker.mode = \"swarm\": \
+         service VIPs are only routable on that overlay"
+    )]
+    DockerSwarmNetworkRequired,
+
     #[error("compression_threshold must be -1 (disabled) or at least 0 (got {value})")]
     CompressionThreshold { value: i32 },
 

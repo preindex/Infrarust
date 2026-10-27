@@ -9,8 +9,8 @@ use crate::error::{ConfigError, ProxyValidationError, ServerValidationError, Was
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
 use crate::types::{
-    BalanceStrategy, ForwardingConfig, ForwardingMode, PluginWasmConfig, WasmCodecQuarantineConfig,
-    WasmLimits, WasmQuotasConfig, WasmRecoveryConfig,
+    BalanceStrategy, DockerMode, ForwardingConfig, ForwardingMode, PluginWasmConfig,
+    WasmCodecQuarantineConfig, WasmLimits, WasmQuotasConfig, WasmRecoveryConfig,
 };
 
 /// Non-fatal findings of a validation that passed.
@@ -333,6 +333,15 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, Conf
         && docker.poll_interval.is_zero()
     {
         return Err(zero_duration("docker.poll_interval"));
+    }
+
+    if let Some(docker) = &config.docker
+        && docker.mode == DockerMode::Swarm
+        && docker.network.as_deref().is_none_or(|n| n.trim().is_empty())
+    {
+        return Err(ConfigError::Proxy(
+            ProxyValidationError::DockerSwarmNetworkRequired,
+        ));
     }
 
     if let Some(web) = &config.web {
