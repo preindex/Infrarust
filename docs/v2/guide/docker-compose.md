@@ -7,7 +7,7 @@ description: Run Infrarust alongside Minecraft servers with Docker Compose, usin
 
 This page walks through a complete `docker-compose.yml` that runs Infrarust as a reverse proxy in front of multiple Minecraft servers. The servers register themselves through Docker labels, so you don't need static config files for each backend.
 
-The Infrarust image also includes Geyser Standalone for Bedrock clients. It starts when `./config/geyser/config.yml` is mounted; without that config it runs Infrarust only. Configure Geyser with `remote.address: 127.0.0.1`, `remote.port: 25565`, and `floodgate-key-file: /app/config/floodgate/key.pem`. Keep the Floodgate key outside source control and mount it read-only; the same key must be configured for the Infrarust Floodgate plugin.
+The Infrarust image also includes Geyser Standalone for Bedrock clients. It starts when `./config/geyser/config.yml` is mounted; without that config it runs Infrarust only. Configure Geyser with `bedrock.transport: nethernet` for Bedrock 26.60+, `remote.address: 127.0.0.1`, `remote.port: 25565`, and `floodgate-key-file: /app/config/floodgate/key.pem`. Keep the Floodgate key outside source control and mount it read-only; the same key must be configured for the Infrarust Floodgate plugin. Publish and allow both TCP and UDP port 19132 for Geyser.
 
 The image bakes Floodgate's WASM at `/app/plugins/floodgate.wasm` and uses `/app/plugins` as its plugin directory. This image explicitly enables the optional `plugin-svc` feature (standalone binaries must opt in). Put native plugin data under `./config/plugins/floodgate` and `./config/plugins/svc-proxy`, then mount those directories individually at the matching `/app/plugins/...` paths. Do not mount over `/app/plugins`, which would hide the baked WASM. The SVC config path is `./config/plugins/svc-proxy/config.toml`; its listener defaults to UDP `0.0.0.0:25565`.
 
@@ -77,6 +77,7 @@ services:
     ports:
       - "25565:25565/tcp"
       - "25565:25565/udp" # Native SVC listener
+      - "19132:19132/tcp" # Geyser NetherNet signaling
       - "19132:19132/udp"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro # [!code focus]
