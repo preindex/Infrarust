@@ -126,6 +126,18 @@ pub fn docker_endpoint() -> String {
     "unix:///var/run/docker.sock".to_string()
 }
 
+pub fn swarm_game_port() -> u16 {
+    25565
+}
+
+pub fn swarm_max_replicas() -> u8 {
+    1
+}
+
+pub fn swarm_readiness_timeout() -> Duration {
+    Duration::from_secs(3)
+}
+
 pub const fn docker_poll_interval() -> Duration {
     Duration::from_secs(30)
 }

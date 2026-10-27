@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use infrarust_config::ServerManagerConfig;
 
 use crate::crafty::CraftyProvider;
+use crate::docker::SwarmServerProvider;
 use crate::error::ServerManagerError;
 use crate::local::LocalProvider;
 use crate::provider::{ProviderStatus, ServerProvider};
@@ -351,6 +352,12 @@ impl ServerManagerService {
                 ),
                 ServerManagerConfig::Crafty(cfg) => (
                     Arc::new(CraftyProvider::new(cfg, http_client.clone())),
+                    cfg.shutdown_after,
+                    cfg.start_timeout,
+                    cfg.poll_interval,
+                ),
+                ServerManagerConfig::DockerSwarm(cfg) => (
+                    Arc::new(SwarmServerProvider::new(cfg)),
                     cfg.shutdown_after,
                     cfg.start_timeout,
                     cfg.poll_interval,

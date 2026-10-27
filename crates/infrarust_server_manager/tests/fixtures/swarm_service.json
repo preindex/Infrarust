@@ -1,0 +1,149 @@
+{
+  "ID": "e2ztjcpm0qgbqaiscyz2ngx1k",
+  "Version": { "Index": 42 },
+  "CreatedAt": "2026-10-01T10:00:00.000000000Z",
+  "UpdatedAt": "2026-10-27T10:00:00.000000000Z",
+  "Spec": {
+    "Name": "mc-survival",
+    "Labels": {
+      "infrarust.swarm.scale": "true",
+      "infrarust.name": "survival",
+      "infrarust.domains": "mc.example.com"
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Image": "itzg/minecraft-server@sha256:0123456789abcdef",
+        "Labels": { "com.example.role": "minecraft" },
+        "Command": ["/start"],
+        "Args": ["--nogui"],
+        "Hostname": "mc",
+        "Env": ["EULA=TRUE", "MEMORY=4G"],
+        "Dir": "/data",
+        "User": "1000:1000",
+        "Groups": ["docker"],
+        "Privileges": {
+          "SELinuxContext": { "Disable": true, "Type": "container_t" }
+        },
+        "TTY": true,
+        "OpenStdin": true,
+        "ReadOnly": false,
+        "Mounts": [
+          {
+            "Type": "volume",
+            "Source": "mc-data",
+            "Target": "/data",
+            "ReadOnly": false,
+            "VolumeOptions": {
+              "Labels": { "backup": "daily" },
+              "DriverConfig": { "Name": "local", "Options": {} }
+            }
+          },
+          {
+            "Type": "bind",
+            "Source": "/srv/configs",
+            "Target": "/configs",
+            "ReadOnly": true,
+            "BindOptions": { "Propagation": "rprivate" }
+          },
+          {
+            "Type": "tmpfs",
+            "Target": "/tmp",
+            "TmpfsOptions": { "SizeBytes": 67108864, "Mode": 1777 }
+          }
+        ],
+        "StopSignal": "SIGTERM",
+        "StopGracePeriod": 30000000000,
+        "HealthCheck": {
+          "Test": ["CMD-SHELL", "mc-health"],
+          "Interval": 30000000000,
+          "Timeout": 5000000000,
+          "Retries": 3,
+          "StartPeriod": 60000000000
+        },
+        "Hosts": ["10.0.0.5 host.internal"],
+        "DNSConfig": {
+          "Nameservers": ["1.1.1.1"],
+          "Search": ["example.com"],
+          "Options": ["ndots:1"]
+        },
+        "Secrets": [
+          {
+            "File": { "Name": "rcon", "UID": "0", "GID": "0", "Mode": 288 },
+            "SecretID": "s1ecret",
+            "SecretName": "rcon"
+          }
+        ],
+        "Configs": [
+          {
+            "File": { "Name": "/cfg/server.properties", "UID": "0", "GID": "0", "Mode": 292 },
+            "ConfigID": "c0nfig",
+            "ConfigName": "server-properties"
+          }
+        ],
+        "Isolation": "default",
+        "Sysctls": { "net.ipv4.ip_forward": "1" },
+        "CapabilityAdd": ["NET_ADMIN"],
+        "CapabilityDrop": ["MKNOD"],
+        "Ulimits": [{ "Name": "nofile", "Soft": 1024, "Hard": 2048 }],
+        "Init": false
+      },
+      "Resources": {
+        "Limits": { "NanoCPUs": 2000000000, "MemoryBytes": 4294967296, "Pids": 512 },
+        "Reservations": { "NanoCPUs": 1000000000, "MemoryBytes": 2147483648 }
+      },
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 3,
+        "Window": 60000000000
+      },
+      "Placement": {
+        "Constraints": ["node.role==worker"],
+        "Preferences": [{ "Spread": { "SpreadDescriptor": "node.labels.zone" } }],
+        "MaxReplicas": 1,
+        "Platforms": [{ "Architecture": "amd64", "OS": "linux" }]
+      },
+      "ForceUpdate": 0,
+      "Runtime": "container",
+      "Networks": [
+        { "Target": "n3t2ork", "Aliases": ["mc"], "DriverOpts": { "com.docker.network.driver.mtu": "1450" } }
+      ],
+      "LogDriver": { "Name": "json-file", "Options": { "max-size": "10m" } }
+    },
+    "Mode": { "Replicated": { "Replicas": 1 } },
+    "UpdateConfig": {
+      "Parallelism": 1,
+      "Delay": 0,
+      "FailureAction": "pause",
+      "Monitor": 5000000000,
+      "MaxFailureRatio": 0.0,
+      "Order": "stop-first"
+    },
+    "RollbackConfig": {
+      "Parallelism": 1,
+      "Delay": 0,
+      "FailureAction": "pause",
+      "Monitor": 0,
+      "MaxFailureRatio": 0.0,
+      "Order": "stop-first"
+    },
+    "EndpointSpec": {
+      "Mode": "vip",
+      "Ports": [
+        {
+          "Name": "minecraft",
+          "Protocol": "tcp",
+          "TargetPort": 25565,
+          "PublishedPort": 25565,
+          "PublishMode": "ingress"
+        }
+      ]
+    }
+  },
+  "Endpoint": {
+    "Spec": { "Mode": "vip", "Ports": [] },
+    "VirtualIPs": [
+      { "NetworkID": "n3t2ork", "Addr": "10.0.1.2/24" }
+    ]
+  }
+}
