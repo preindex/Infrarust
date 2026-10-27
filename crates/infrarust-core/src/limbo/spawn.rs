@@ -182,7 +182,17 @@ async fn send_player_position(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
+    send_limbo_player_position(client, version, registry, 0).await
+}
+
+pub(crate) async fn send_limbo_player_position(
+    client: &mut ClientBridge,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+    teleport_id: i32,
+) -> Result<(), CoreError> {
     let pos = limbo_player_position(version);
+    let pos = CSynchronizePlayerPosition { teleport_id, ..pos };
     let frame = encode_packet(&pos, version, registry)?;
     client.write_frame(&frame).await
 }
