@@ -21,9 +21,10 @@ That's it. All fields have defaults. Infrarust connects to the local Docker sock
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `mode` | `"container"` or `"swarm"` | `"container"` | `container` discovers standalone containers. `swarm` discovers Swarm services (see [Swarm mode](#swarm-mode)). |
 | `endpoint` | string | `"unix:///var/run/docker.sock"` | Docker daemon socket. Use `tcp://host:2375` for remote daemons. |
-| `network` | string | none | Preferred Docker network for address resolution. |
-| `poll_interval` | duration | `"30s"` | Fallback polling interval. |
+| `network` | string | none | In `container` mode: preferred network for address resolution. In `swarm` mode: the overlay network whose service VIP is the backend address. **Required** in `swarm` mode. |
+| `poll_interval` | duration | `"30s"` | Swarm mode: interval between full service snapshots, which are authoritative. Not used in `container` mode. |
 | `reconnect_delay` | duration | `"5s"` | Initial delay before reconnecting after a daemon disconnection. |
 
 Full example:
@@ -194,9 +195,140 @@ If your backend expects PROXY protocol headers (for IP forwarding):
       infrarust.send_proxy_protocol: "true"
 ```
 
+## Swarm mode
+
+Set `mode = "swarm"` to discover Docker Swarm services instead of standalone containers. Infrarust reads the labels of each **service** (its `Spec.Labels`, which is what Compose writes from `deploy.labels`) and routes to the service's **VIP** on the overlay network named by `network`. Routing goes through the VIP, so you do not need to know which node or task runs the server.
+
+```toml
+[docker]
+mode = "swarm"
+network = "mc-overlay"
+```
+
+Infrarust must run on a Swarm **manager** node, because it uses the manager API. It must also be attached to the same overlay network as the Minecraft services, so that the VIP is reachable.
+
+### Stack example
+
+```yaml
+services:
+  infrarust:
+    image: ghcr.io/shadowner/infrarust:latest
+    ports:
+      - "25565:25565"
+    volumes:
+      - ./infrarust.toml:/app/infrarust.toml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - mc-overlay
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+
+  mc-survival:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "TRUE"
+    networks:
+      - mc-overlay
+    deploy:
+      replicas: 1
+      update_config:
+        order: stop-first
+      labels:
+        infrarust.enable: "true"
+        infrarust.domains: "survival.example.com"
+        infrarust.port: "25565"
+        infrarust.proxy_mode: "client_only"
+        infrarust.motd.text: "Survival"
+
+networks:
+  mc-overlay:
+    name: mc-overlay
+    driver: overlay
+```
+
+Set `name:` on the network, as above, so that the configured `network` matches the real overlay name. Without it, Compose prefixes the name with the stack name (for example `mystack_mc-overlay`).
+
+::: warning
+Put the labels under `deploy.labels`, not the top-level `labels:` key. In swarm mode Infrarust reads only service labels, and a top-level `labels:` entry only sets container labels, which swarm mode ignores.
+:::
+
+### Supported and skipped services
+
+Infrarust registers each labelled service that it can route safely. It skips the rest, logs the reason once per change, and keeps polling:
+
+| Service shape | Result |
+|---------------|--------|
+| Replicated, 0 or 1 replica, VIP on the configured overlay | Registered. Zero-replica services are registered too, and connections fail until they are scaled up. |
+| 2 or more replicas | Skipped. |
+| `global` mode | Skipped. |
+| Replicated or global jobs | Skipped. |
+| `endpoint_mode: dnsrr` | Skipped (no VIP). |
+| `update_config.order: start-first` | Skipped, because two backends can briefly overlap. Use `stop-first`. |
+| Not attached to the configured overlay | Skipped. |
+| Server name has characters other than `a-z`, `0-9`, `_`, `-`, `.` | Skipped. Set `infrarust.name` to a valid name. |
+
+The poll is authoritative. A service that stops matching (for example, it is scaled to two replicas) is removed from routing. If a poll fails, for example because the node is not a manager, the proxy keeps the routes it already has and logs a warning.
+
+The provider ID for a swarm service is `docker@swarm:<service-id>`, which stays the same when the service is renamed.
+
+### Service labels
+
+These labels go under `deploy.labels`. They are the container labels above, plus the service-level settings below.
+
+| Label | Type | Default | Description |
+|-------|------|---------|-------------|
+| `infrarust.enable` | `"true"` | required | Opts the service in. |
+| `infrarust.domains` | comma-separated | `<service_name>.docker.local` | Domains that route to this server. |
+| `infrarust.port` | integer | `25565` | Minecraft port inside the service's containers. |
+| `infrarust.name` | string | service name | Server name. Only `a-z`, `0-9`, `_`, `-`, `.` are allowed. |
+| `infrarust.proxy_mode` | string | `passthrough` | One of: `passthrough`, `client_only`, `offline`, `server_only`, `zero_copy`. |
+| `infrarust.send_proxy_protocol` | `"true"` or `"1"` | `false` | Send PROXY protocol headers to the backend. |
+| `infrarust.network` | string | none | Switch network group, for server switching. |
+| `infrarust.forwarding_mode` | string | none | One of: `none`, `bungeecord`, `bungeeguard`, `velocity`. |
+| `infrarust.domain_rewrite` | string | `none` | `none`, `from_backend`, or an explicit domain. |
+| `infrarust.balance` | string | `first_available` | One of: `first_available`, `round_robin`, `least_conn`. |
+| `infrarust.max_players` | integer | `0` (unlimited) | Maximum player count. |
+| `infrarust.limbo_handlers` | comma-separated | none | Limbo handler IDs, run in order. |
+| `infrarust.timeouts.connect` / `.read` / `.write` | duration (`"5s"`) | global defaults | Per-server timeouts. |
+| `infrarust.motd.text` | string | none | MOTD for the `online` state (alias for `infrarust.motd.online.text`). |
+| `infrarust.motd.<state>.text` | string | none | MOTD for `online`, `sleeping`, `starting`, `crashed`, `stopping`, or `unreachable`. |
+| `infrarust.motd.<state>.version_name` | string | none | Version name shown with that MOTD state. |
+| `infrarust.motd.<state>.max_players` | integer | none | Player count shown with that MOTD state. |
+
+An invalid value is logged and ignored. Only that setting falls back to its default. Labels never carry secrets: server-manager credentials and favicon data cannot be set from labels, so put them in the server config file instead.
+
+### Swarm example with service labels
+
+```yaml
+  mc-creative:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "TRUE"
+      GAMEMODE: "creative"
+    networks:
+      - mc-overlay
+    deploy:
+      replicas: 1
+      update_config:
+        order: stop-first
+      labels:
+        infrarust.enable: "true"
+        infrarust.domains: "creative.example.com"
+        infrarust.proxy_mode: "client_only"
+        infrarust.network: "main"
+        infrarust.forwarding_mode: "velocity"
+        infrarust.max_players: "100"
+        infrarust.timeouts.connect: "3s"
+        infrarust.motd.text: "§bCreative"
+        infrarust.motd.sleeping.text: "§7Sleeping, join to wake up"
+        infrarust.motd.sleeping.version_name: "Creative"
+```
+
 ## How discovery works
 
-On startup, Infrarust lists all running containers with `infrarust.enable=true` and registers them. It then subscribes to the Docker event stream and reacts to six events: `start`, `stop`, `die`, `destroy`, `pause`, and `unpause`.
+In `container` mode (the default), on startup Infrarust lists all running containers with `infrarust.enable=true` and registers them. It then subscribes to the Docker event stream and reacts to six events: `start`, `stop`, `die`, `destroy`, `pause`, and `unpause`.
 
 When a container starts or unpauses, Infrarust inspects it, parses the labels, resolves the address, and adds it to the router. When a container stops, dies, pauses, or is destroyed, Infrarust removes it.
 
@@ -211,5 +343,5 @@ The Docker feature must be compiled in. If you see a warning like "docker config
 Docker and file providers work side by side. You can define some servers as `.toml` files in `servers/` and discover others from Docker containers. Both feed into the same routing table.
 
 ::: tip
-Docker-discovered servers get a provider ID in the format `docker@<container_name>`. File-based servers use `file@<filename>`. These IDs are visible in logs and the console.
+Docker-discovered servers get a provider ID in the format `docker@<container_name>`. Swarm services get `docker@swarm:<service-id>`. File-based servers use `file@<filename>`. These IDs are visible in logs and the console.
 :::

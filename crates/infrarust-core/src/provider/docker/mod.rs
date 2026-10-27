@@ -1,13 +1,18 @@
 //! Docker-based configuration provider.
 //!
 //! Discovers Minecraft servers from Docker containers with `infrarust.*`
-//! labels and watches Docker events for real-time updates.
+//! labels, or from Swarm services when `mode = "swarm"`, and watches Docker
+//! events for real-time updates. Swarm mode also polls on `poll_interval`,
+//! which is authoritative: a failed snapshot keeps the known routes.
 //!
 //! Entirely feature-gated behind `docker`.
 
 pub mod labels;
+pub mod swarm;
 
-pub use labels::{labels_to_server_config, resolve_container_address};
+pub use labels::{
+    labels_to_server_config, resolve_container_address, service_labels_to_server_config,
+};
 
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -15,23 +20,28 @@ use std::time::Duration;
 
 use bollard::Docker;
 use bollard::query_parameters::{
-    EventsOptionsBuilder, InspectContainerOptions, ListContainersOptionsBuilder,
+    EventsOptionsBuilder, InspectContainerOptions, InspectNetworkOptions,
+    ListContainersOptionsBuilder, ListServicesOptionsBuilder, ListTasksOptionsBuilder,
 };
 use futures_util::StreamExt;
 use tokio::sync::{Mutex, mpsc};
+use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_config::{DockerProviderConfig, ServerConfig};
+use infrarust_config::{DockerMode, DockerProviderConfig, ServerConfig};
 
 use crate::error::CoreError;
 use crate::provider::{ConfigProvider, ProviderConfig, ProviderEvent, ProviderId};
+use swarm::{SkipReason, SkippedService, SwarmSnapshot};
 
-/// Default Minecraft port.
-/// Docker provider that auto-discovers containers with `infrarust.*` labels.
+/// Docker provider that auto-discovers containers or Swarm services.
 pub struct DockerProvider {
     config: DockerProviderConfig,
-    /// Known containers: container_name → ServerConfig
+    /// Known servers: unique id (container name, or `swarm:<service-id>`) → ServerConfig
     known: Mutex<HashMap<String, ServerConfig>>,
+    /// Swarm services skipped on the last snapshot, so a skip is logged once
+    /// per change instead of on every poll.
+    skipped: Mutex<HashMap<String, SkipReason>>,
 }
 
 impl DockerProvider {
@@ -39,6 +49,7 @@ impl DockerProvider {
         Self {
             config: config.clone(),
             known: Mutex::new(HashMap::new()),
+            skipped: Mutex::new(HashMap::new()),
         }
     }
 
@@ -191,7 +202,7 @@ impl DockerProvider {
             // Reset delay on successful connection
             reconnect_delay = self.config.reconnect_delay;
 
-            match self.watch_events(&docker, sender, shutdown).await {
+            match self.watch_session(&docker, sender, shutdown).await {
                 Ok(()) => return Ok(()), // Normal shutdown
                 Err(e) => {
                     if shutdown.is_cancelled() {
@@ -211,10 +222,23 @@ impl DockerProvider {
 
                     // Re-scan after reconnection
                     if let Ok(docker) = self.connect() {
-                        self.resync_containers(&docker, sender).await;
+                        self.resync(&docker, sender).await;
                     }
                 }
             }
+        }
+    }
+
+    /// Runs one connected watch session for the configured mode.
+    async fn watch_session(
+        &self,
+        docker: &Docker,
+        sender: &mpsc::Sender<ProviderEvent>,
+        shutdown: &CancellationToken,
+    ) -> Result<(), CoreError> {
+        match self.config.mode {
+            DockerMode::Container => self.watch_events(docker, sender, shutdown).await,
+            DockerMode::Swarm => self.watch_swarm(docker, sender, shutdown).await,
         }
     }
 
@@ -376,6 +400,160 @@ impl DockerProvider {
     }
 }
 
+impl DockerProvider {
+    /// Re-reads the configured mode's full state and emits diffs.
+    async fn resync(&self, docker: &Docker, sender: &mpsc::Sender<ProviderEvent>) {
+        match self.config.mode {
+            DockerMode::Container => self.resync_containers(docker, sender).await,
+            DockerMode::Swarm => {
+                if let Err(e) = self.resync_swarm(docker, sender).await {
+                    // Keep the known routes: a failed snapshot proves nothing.
+                    tracing::warn!(error = %e, "failed to resync swarm services, keeping known routes");
+                }
+            }
+        }
+    }
+
+    /// Takes one complete swarm snapshot from the manager API.
+    ///
+    /// Any API error fails the whole snapshot, so callers never see a partial
+    /// listing that would remove routes.
+    async fn swarm_snapshot(&self, docker: &Docker) -> Result<SwarmSnapshot, CoreError> {
+        let docker_err = |e: bollard::errors::Error| CoreError::DockerConnection(e.to_string());
+
+        let overlay_name = self.config.network.as_deref().ok_or_else(|| {
+            CoreError::DockerConnection("docker.network is required in swarm mode".to_string())
+        })?;
+        let overlay = docker
+            .inspect_network(overlay_name, None::<InspectNetworkOptions>)
+            .await
+            .map_err(docker_err)?;
+        if overlay.driver.as_deref() != Some("overlay") {
+            return Err(CoreError::DockerConnection(format!(
+                "docker.network '{overlay_name}' is not an overlay network"
+            )));
+        }
+        let overlay_id = overlay.id.ok_or_else(|| {
+            CoreError::DockerConnection(format!("overlay '{overlay_name}' has no id"))
+        })?;
+
+        let mut service_filters = HashMap::new();
+        service_filters.insert("label", vec![swarm::ENABLE_LABEL]);
+        let services = docker
+            .list_services(Some(
+                ListServicesOptionsBuilder::default()
+                    .filters(&service_filters)
+                    .build(),
+            ))
+            .await
+            .map_err(docker_err)?;
+
+        // Tasks are only needed for the labelled services; skip the call when
+        // there are none.
+        let service_ids: Vec<&str> = services.iter().filter_map(|s| s.id.as_deref()).collect();
+        let running = if service_ids.is_empty() {
+            HashMap::new()
+        } else {
+            let mut task_filters = HashMap::new();
+            task_filters.insert("service", service_ids);
+            task_filters.insert("desired-state", vec!["running"]);
+            let tasks = docker
+                .list_tasks(Some(
+                    ListTasksOptionsBuilder::default()
+                        .filters(&task_filters)
+                        .build(),
+                ))
+                .await
+                .map_err(docker_err)?;
+            swarm::count_running_tasks(&tasks)
+        };
+
+        Ok(swarm::build_snapshot(&services, &running, &overlay_id))
+    }
+
+    /// Logs skipped services, once per change, and records the new skip set.
+    async fn report_skips(&self, skipped: &[SkippedService]) {
+        let mut previous = self.skipped.lock().await;
+        for s in skipped {
+            if previous.get(&s.service_id) != Some(&s.reason) {
+                tracing::warn!(
+                    service = %s.service_name,
+                    reason = %s.reason,
+                    "skipping swarm service"
+                );
+            }
+        }
+        *previous = skipped
+            .iter()
+            .map(|s| (s.service_id.clone(), s.reason.clone()))
+            .collect();
+    }
+
+    /// Polls the swarm snapshot and emits diffs against known routes.
+    ///
+    /// Only changed configs produce `Updated`, so a steady poll emits nothing.
+    async fn resync_swarm(
+        &self,
+        docker: &Docker,
+        sender: &mpsc::Sender<ProviderEvent>,
+    ) -> Result<(), CoreError> {
+        let snapshot = self.swarm_snapshot(docker).await?;
+        self.report_skips(&snapshot.skipped).await;
+
+        let mut known = self.known.lock().await;
+        for event in swarm::diff_routes(&mut known, snapshot.routes) {
+            let _ = sender.send(event).await;
+        }
+
+        Ok(())
+    }
+
+    /// Watches swarm service events and polls on `poll_interval`.
+    ///
+    /// The poll is authoritative. Events only trigger an earlier snapshot.
+    async fn watch_swarm(
+        &self,
+        docker: &Docker,
+        sender: &mpsc::Sender<ProviderEvent>,
+        shutdown: &CancellationToken,
+    ) -> Result<(), CoreError> {
+        let mut filters = HashMap::new();
+        filters.insert("type".to_string(), vec!["service".to_string()]);
+        filters.insert(
+            "event".to_string(),
+            vec![
+                "create".to_string(),
+                "update".to_string(),
+                "remove".to_string(),
+            ],
+        );
+        let options = EventsOptionsBuilder::default().filters(&filters).build();
+        let mut events = docker.events(Some(options));
+
+        let mut ticker =
+            tokio::time::interval(self.config.poll_interval.max(Duration::from_secs(1)));
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        // The first tick completes immediately; the caller has just synced.
+        ticker.tick().await;
+
+        loop {
+            tokio::select! {
+                biased;
+                () = shutdown.cancelled() => return Ok(()),
+                _ = ticker.tick() => {}
+                event = events.next() => match event {
+                    Some(Ok(_)) => {}
+                    Some(Err(e)) => return Err(CoreError::DockerConnection(e.to_string())),
+                    None => {
+                        return Err(CoreError::DockerConnection("event stream ended".to_string()));
+                    }
+                },
+            }
+            self.resync(docker, sender).await;
+        }
+    }
+}
+
 impl ConfigProvider for DockerProvider {
     fn provider_type(&self) -> &str {
         "docker"
@@ -386,7 +564,14 @@ impl ConfigProvider for DockerProvider {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>> {
         Box::pin(async move {
             let docker = self.connect()?;
-            let configs = self.scan_containers(&docker).await?;
+            let configs = match self.config.mode {
+                DockerMode::Container => self.scan_containers(&docker).await?,
+                DockerMode::Swarm => {
+                    let snapshot = self.swarm_snapshot(&docker).await?;
+                    self.report_skips(&snapshot.skipped).await;
+                    snapshot.routes
+                }
+            };
 
             // Store in known map
             let mut known = self.known.lock().await;

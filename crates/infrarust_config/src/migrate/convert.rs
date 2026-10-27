@@ -726,6 +726,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
             .docker_host
             .clone()
             .unwrap_or_else(crate::defaults::docker_endpoint),
+        mode: Default::default(),
         network: None,
         poll_interval: dp
             .polling_interval
