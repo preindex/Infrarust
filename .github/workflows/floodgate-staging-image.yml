@@ -6,11 +6,13 @@ on:
       - codex/floodgate-compat
     paths:
       - Dockerfile
-      - Dockerfile.geyser-staging
+      - Dockerfile.combined-entrypoint.sh
+      - .dockerignore
       - Cargo.toml
       - Cargo.lock
       - crates/**
-      - plugins/infrarust-plugin-floodgate/**
+      - plugins/**
+      - tools/**
       - .github/workflows/floodgate-staging-image.yml
 
 permissions:
@@ -38,7 +40,7 @@ jobs:
         id: image
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and publish Infrarust staging image
+      - name: Build and publish combined Infrarust + Geyser staging image
         uses: docker/build-push-action@v7.4.0
         with:
           context: .
@@ -48,12 +50,3 @@ jobs:
           build-args: |
             RUST_VERSION=1.99.0
             ALPINE_VERSION=3.24
-
-      - name: Build and publish pinned Geyser staging image
-        uses: docker/build-push-action@v7.4.0
-        with:
-          context: .
-          file: Dockerfile.geyser-staging
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.image.outputs.name }}:geyser-floodgate-staging

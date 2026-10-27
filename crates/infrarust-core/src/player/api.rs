@@ -50,6 +50,17 @@ impl Player for PlayerSession {
         read(&self.routing).current.clone()
     }
 
+    fn connected_address(&self) -> Option<infrarust_api::types::ServerAddress> {
+        PlayerSession::connected_address(self).map(|address| infrarust_api::types::ServerAddress {
+            host: address.host,
+            port: address.port,
+        })
+    }
+
+    fn backend_remote_addr(&self) -> Option<SocketAddr> {
+        PlayerSession::backend_remote_addr(self)
+    }
+
     fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Acquire)
     }
