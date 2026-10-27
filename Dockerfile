@@ -35,6 +35,7 @@ COPY --from=frontend-builder /frontend/.output/public/ \
 ENV OPENSSL_STATIC=1
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 
+# Enable the native SVC plugin for the packaged image; standalone builds opt in separately.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/usr/crates/infrarust/target \
@@ -55,7 +56,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     esac && \
     echo "Building for target: $TARGET on architecture: $ARCH" && \
     rustup target add "$TARGET" && \
-    cargo build --release --target "$TARGET" -p infrarust --features docker && \
+    cargo build --release --target "$TARGET" -p infrarust --features "docker,default-plugins,plugin-svc" && \
     cp "target/$TARGET/release/infrarust" /usr/local/bin/infrarust && \
     echo "Build completed successfully"
 
@@ -76,20 +77,39 @@ RUN mkdir -p /image-root/app/cache/wasm && \
     chown -R 65532:65532 /image-root/app/cache && \
     chmod 0700 /image-root/app/cache /image-root/app/cache/wasm
 
-# Stage 3: Runtime
-FROM scratch AS runtime
+# Stage 3: Combined Infrarust + Geyser runtime
+FROM docker.io/library/eclipse-temurin:21-jre-alpine AS runtime
 
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+RUN apk add --no-cache bash \
+    && mkdir -p /app/config /app/geyser /app/plugins/floodgate /app/cache/wasm /opt/geyser \
+    && chown -R 65532:65532 /app /opt/geyser
+
+ARG GEYSER_VERSION=2.12.0
+ARG GEYSER_BUILD=1271
+ARG GEYSER_SHA256=df30afb9970f3a71291ee6c96b5fb21e59fbf6d48a3c0c3f4877fcb096c4e314
+
+RUN apk add --no-cache curl \
+    && curl -fsSL \
+      "https://download.geysermc.org/v2/projects/geyser/versions/${GEYSER_VERSION}/builds/${GEYSER_BUILD}/downloads/standalone" \
+      -o /opt/geyser/Geyser-Standalone.jar \
+    && echo "${GEYSER_SHA256}  /opt/geyser/Geyser-Standalone.jar" | sha256sum -c - \
+    && apk del curl \
+    && chown 65532:65532 /opt/geyser/Geyser-Standalone.jar \
+    && chmod 0700 /app/cache /app/cache/wasm
+
 COPY --from=builder /usr/local/bin/infrarust /sbin/infrarust
 COPY --from=builder /image-root/app /app
 COPY --from=builder /usr/local/share/infrarust/plugins/floodgate.wasm /app/plugins/floodgate.wasm
+COPY Dockerfile.combined-entrypoint.sh /usr/local/bin/container-entrypoint
+
+RUN chmod 0755 /usr/local/bin/container-entrypoint \
+    && chown -R 65532:65532 /app /opt/geyser
 
 WORKDIR /app
-VOLUME ["/app/config"]
-EXPOSE 25565
-EXPOSE 8080
+VOLUME ["/app/config", "/app/geyser"]
+EXPOSE 25565/tcp 25565/udp 19132/udp 8080/tcp
 
 USER 65532:65532
 
-ENTRYPOINT ["/sbin/infrarust"]
+ENTRYPOINT ["/usr/local/bin/container-entrypoint"]
 CMD ["--config", "/app/config/infrarust.toml", "--plugins-dir", "/app/plugins", "--servers-dir", "/app/config/servers"]

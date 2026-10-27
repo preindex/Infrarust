@@ -426,6 +426,25 @@ mod tests {
     }
 
     #[test]
+    fn resolved_backend_peer_does_not_change_configured_load_accounting_address() {
+        let load = Arc::new(BackendLoad::new());
+        let configured = addr("backend.internal");
+        let resolved_peer = "10.4.5.6:25565".parse().expect("resolved TCP peer");
+        let player = session(1, Uuid::new_v4(), "alice", "lobby", &load);
+
+        player.set_connected_address(Some(configured.clone()));
+        player.set_backend_remote_addr(Some(resolved_peer));
+
+        assert_eq!(player.connected_address(), Some(configured.clone()));
+        assert_eq!(player.backend_remote_addr(), Some(resolved_peer));
+        assert_eq!(load.active_connections_for_address(&configured), 1);
+
+        player.set_backend_remote_addr(None);
+        assert_eq!(player.connected_address(), Some(configured.clone()));
+        assert_eq!(load.active_connections_for_address(&configured), 1);
+    }
+
+    #[test]
     fn replace_path_releases_previous_address() {
         let registry = Arc::new(ConnectionRegistry::new());
         let load = Arc::new(BackendLoad::new());

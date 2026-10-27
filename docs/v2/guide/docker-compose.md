@@ -7,6 +7,12 @@ description: Run Infrarust alongside Minecraft servers with Docker Compose, usin
 
 This page walks through a complete `docker-compose.yml` that runs Infrarust as a reverse proxy in front of multiple Minecraft servers. The servers register themselves through Docker labels, so you don't need static config files for each backend.
 
+The Infrarust image also includes Geyser Standalone for Bedrock clients. It starts when `./config/geyser/config.yml` is mounted; without that config it runs Infrarust only. Configure Geyser with `remote.address: 127.0.0.1`, `remote.port: 25565`, and `floodgate-key-file: /app/config/floodgate/key.pem`. Keep the Floodgate key outside source control and mount it read-only; the same key must be configured for the Infrarust Floodgate plugin.
+
+The image bakes Floodgate's WASM at `/app/plugins/floodgate.wasm` and uses `/app/plugins` as its plugin directory. This image explicitly enables the optional `plugin-svc` feature (standalone binaries must opt in). Put native plugin data under `./config/plugins/floodgate` and `./config/plugins/svc-proxy`, then mount those directories individually at the matching `/app/plugins/...` paths. Do not mount over `/app/plugins`, which would hide the baked WASM. The SVC config path is `./config/plugins/svc-proxy/config.toml`; its listener defaults to UDP `0.0.0.0:25565`.
+
+Floodgate needs `permissions = ["filesystem-extended"]` in `[plugins.floodgate]` and a read-only WASM mount from `/app/config/floodgate` to `/keys`. Its adapter config at `./config/plugins/floodgate/config.toml` must set `key_file = "/keys/key.pem"` and `trusted_sources` to only Geyser's TCP peer. Since Geyser connects to `127.0.0.1` inside this container, use `trusted_sources = ["127.0.0.1/32"]`.
+
 ## Prerequisites
 
 You need Docker and Docker Compose v2 installed. The examples use the `itzg/minecraft-server` image for backend servers, but any Minecraft server image works.
@@ -16,11 +22,20 @@ You need Docker and Docker Compose v2 installed. The examples use the `itzg/mine
 ```
 my-network/
 ├── docker-compose.yml
-└── config/
-    └── infrarust.toml
+├── config/
+│   ├── infrarust.toml
+│   ├── geyser/
+│   │   └── config.yml
+│   └── plugins/
+│       ├── floodgate/
+│       │   └── config.toml
+│       └── svc-proxy/
+│           └── config.toml
+├── secrets/floodgate/key.pem
+└── geyser-data/
 ```
 
-The `config/` directory is mounted into the Infrarust container. If you also want file-based server definitions, add a `servers/` subdirectory there.
+The `config/` directory is mounted into the Infrarust container. Keep `secrets/floodgate/key.pem` outside source control, and create a writable `geyser-data/` directory for Geyser state. If you also want file-based server definitions, add a `servers/` subdirectory under `config/`. The container runs as uid `65532`: make the config files, plugin config directories, and secret key readable/searchable by that uid, and make `geyser-data/` writable by it (on Linux, `chown -R 65532:65532 geyser-data` is one option).
 
 ## The infrarust.toml
 
@@ -28,6 +43,16 @@ A minimal config that enables Docker discovery:
 
 ```toml
 bind = "0.0.0.0:25565"
+plugins_dir = "/app/plugins"
+
+[plugins.floodgate]
+enabled = true
+permissions = ["filesystem-extended"]
+
+[[plugins.floodgate.wasm.mounts]]
+host = "/app/config/floodgate"
+guest = "/keys"
+read_only = true
 
 [docker]
 network = "minecraft"
@@ -50,10 +75,16 @@ services:
     image: ghcr.io/shadowner/infrarust:latest
     container_name: infrarust
     ports:
-      - "25565:25565"
+      - "25565:25565/tcp"
+      - "25565:25565/udp" # Native SVC listener
+      - "19132:19132/udp"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro # [!code focus]
       - ./config:/app/config
+      - ./secrets/floodgate:/app/config/floodgate:ro
+      - ./config/plugins/floodgate:/app/plugins/floodgate:ro
+      - ./config/plugins/svc-proxy:/app/plugins/svc-proxy:ro
+      - ./geyser-data:/app/geyser
     networks:
       - minecraft
     restart: unless-stopped

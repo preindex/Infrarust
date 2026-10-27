@@ -11,7 +11,8 @@ use crate::error::PlayerError;
 use crate::event::BoxFuture;
 use crate::messaging::ChannelId;
 use crate::types::{
-    Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
+    Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerAddress, ServerId,
+    TitleData,
 };
 
 mod boss_bar;
@@ -61,6 +62,23 @@ pub trait Player: Send + Sync + private::Sealed {
 
     /// `None` if the player hasn't been routed to a backend yet.
     fn current_server(&self) -> Option<ServerId>;
+
+    /// The concrete backend address serving this player, when known.
+    ///
+    /// This is the selected address for the active connection (including load
+    /// balancer selection), rather than an arbitrary address from the server
+    /// configuration. It is `None` before routing and in passthrough paths that
+    /// do not expose an active backend connection.
+    fn connected_address(&self) -> Option<ServerAddress> {
+        None
+    }
+
+    /// The resolved TCP peer address of the active backend connection, when
+    /// available. Unlike `connected_address`, this is not a configured server
+    /// address and must not be used for backend load accounting.
+    fn backend_remote_addr(&self) -> Option<SocketAddr> {
+        None
+    }
 
     fn is_connected(&self) -> bool;
 

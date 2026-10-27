@@ -1955,6 +1955,7 @@ dependencies = [
  "infrarust-plugin-auth",
  "infrarust-plugin-hello",
  "infrarust-plugin-server-wake",
+ "infrarust-plugin-svc",
  "infrarust-transport",
  "infrarust_config",
  "mimalloc",
@@ -2206,6 +2207,21 @@ dependencies = [
  "infrarust-api",
  "infrarust-plugin-stats",
  "tracing",
+]
+
+[[package]]
+name = "infrarust-plugin-svc"
+version = "2.0.0-beta.4"
+dependencies = [
+ "aes-gcm",
+ "bytes",
+ "infrarust-api",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

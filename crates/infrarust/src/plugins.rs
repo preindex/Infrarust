@@ -37,6 +37,15 @@ pub fn build_static_loader(
         });
     }
 
+    #[cfg(feature = "plugin-svc")]
+    {
+        use infrarust_api::plugin::Plugin;
+        let svc = infrarust_plugin_svc::SvcProxyPlugin::default();
+        loader.register(svc.metadata(), || {
+            Box::new(infrarust_plugin_svc::SvcProxyPlugin::default())
+        });
+    }
+
     // Admin API: always compiled, conditionally registered based on [web] config
     if let Some(web) = web_config.filter(|w| w.enable_api) {
         use infrarust_api::plugin::Plugin;

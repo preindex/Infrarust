@@ -2,6 +2,7 @@
 //!
 //! Wraps the backend TCP stream with packet codec and optional compression.
 
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -43,6 +44,7 @@ pub struct BackendBridge {
     /// Protocol version of this connection.
     pub protocol_version: ProtocolVersion,
     server_address: Option<infrarust_config::ServerAddress>,
+    remote_addr: Option<SocketAddr>,
 }
 
 impl BackendBridge {
@@ -54,6 +56,7 @@ impl BackendBridge {
             state: ConnectionState::Login,
             protocol_version,
             server_address: None,
+            remote_addr: None,
         }
     }
 
@@ -65,6 +68,16 @@ impl BackendBridge {
 
     pub const fn server_address(&self) -> Option<&infrarust_config::ServerAddress> {
         self.server_address.as_ref()
+    }
+
+    #[must_use]
+    pub const fn with_remote_addr(mut self, address: SocketAddr) -> Self {
+        self.remote_addr = Some(address);
+        self
+    }
+
+    pub const fn remote_addr(&self) -> Option<SocketAddr> {
+        self.remote_addr
     }
 
     /// Reads the next packet frame from the backend.
