@@ -36,7 +36,8 @@ pub use plugin_messaging::PluginMessagingConfig;
 pub use proxy_mode::ProxyMode;
 pub use rate_limit::RateLimitConfig;
 pub use server_manager::{
-    CraftyManagerConfig, LocalManagerConfig, PterodactylManagerConfig, ServerManagerConfig,
+    CraftyManagerConfig, DockerSwarmManagerConfig, LocalManagerConfig, PterodactylManagerConfig,
+    ServerManagerConfig,
 };
 pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
 pub use telemetry::{MetricsConfig, OtlpProtocol, ResourceConfig, TelemetryConfig, TracesConfig};

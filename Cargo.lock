@@ -2304,6 +2304,7 @@ dependencies = [
 name = "infrarust_server_manager"
 version = "2.0.0-beta.4"
 dependencies = [
+ "bollard",
  "dashmap",
  "infrarust_config",
  "reqwest",
