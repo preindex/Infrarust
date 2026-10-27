@@ -12,13 +12,14 @@ use bollard::models::{
     ServiceSpec, ServiceSpecMode, ServiceSpecModeReplicated, ServiceSpecModeReplicatedJob,
     ServiceSpecUpdateConfig, ServiceSpecUpdateConfigOrderEnum, Task, TaskState, TaskStatus,
 };
+use infrarust_config::ServerManagerConfig;
 use infrarust_config::{BalanceStrategy, DomainRewrite, ForwardingMode, ProxyMode, ServerConfig};
 use infrarust_core::provider::ProviderEvent;
 use infrarust_core::provider::docker::labels::{
     labels_to_server_config, service_labels_to_server_config,
 };
 use infrarust_core::provider::docker::swarm::{
-    SkipReason, build_snapshot, count_running_tasks, diff_routes,
+    SkipReason, build_snapshot, build_snapshot_with_endpoint, count_running_tasks, diff_routes,
 };
 
 const OVERLAY_ID: &str = "overlay-net-id";
@@ -261,6 +262,38 @@ fn zero_replica_service_is_registered() {
     let snapshot = build_snapshot(&services, &HashMap::new(), OVERLAY_ID);
     assert_eq!(snapshot.routes.len(), 1);
     assert_eq!(snapshot.routes[0].id.to_string(), "docker@swarm:svc-0");
+}
+
+#[test]
+fn autoscale_labels_create_a_swarm_manager_config_for_zero_replicas() {
+    let mut service = routable("service-id", "mc-survival", "10.0.1.5/24");
+    service.spec.as_mut().unwrap().mode = Some(replicated(0));
+    service.spec.as_mut().unwrap().labels = Some(enabled(&[
+        ("infrarust.swarm.scale", "true"),
+        ("infrarust.swarm.idle_timeout", "90s"),
+        ("infrarust.swarm.min_uptime", "10m"),
+        ("infrarust.swarm.cooldown", "2m"),
+        ("infrarust.swarm.min_replicas", "0"),
+    ]));
+
+    let snapshot = build_snapshot_with_endpoint(
+        &[service],
+        &HashMap::new(),
+        OVERLAY_ID,
+        Some("tcp://docker-manager:2375"),
+        Duration::from_secs(7),
+    );
+    let config = &snapshot.routes[0].config;
+    let Some(ServerManagerConfig::DockerSwarm(manager)) = &config.server_manager else {
+        panic!("autoscale label must create Docker Swarm manager config");
+    };
+    assert_eq!(manager.service_id, "service-id");
+    assert_eq!(manager.endpoint, "tcp://docker-manager:2375");
+    assert_eq!(manager.network_id.as_deref(), Some(OVERLAY_ID));
+    assert_eq!(manager.shutdown_after, Some(Duration::from_secs(90)));
+    assert_eq!(manager.min_uptime, Some(Duration::from_secs(600)));
+    assert_eq!(manager.cooldown, Some(Duration::from_secs(120)));
+    assert_eq!(manager.poll_interval, Duration::from_secs(7));
 }
 
 #[test]

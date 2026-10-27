@@ -15,7 +15,9 @@ use bollard::models::{
     TaskState,
 };
 
-use infrarust_config::{DEFAULT_MC_PORT, ServerConfig};
+use infrarust_config::{
+    DEFAULT_MC_PORT, DockerSwarmManagerConfig, ServerConfig, ServerManagerConfig,
+};
 
 use super::labels::service_labels_to_server_config;
 use crate::provider::{ProviderConfig, ProviderEvent, ProviderId};
@@ -140,6 +142,24 @@ pub fn build_snapshot(
     running_tasks: &HashMap<String, usize>,
     overlay_id: &str,
 ) -> SwarmSnapshot {
+    build_snapshot_with_endpoint(
+        services,
+        running_tasks,
+        overlay_id,
+        None,
+        std::time::Duration::from_secs(5),
+    )
+}
+
+/// Builds a snapshot and attaches manager config to services that explicitly
+/// opt in with `infrarust.swarm.scale=true`.
+pub fn build_snapshot_with_endpoint(
+    services: &[Service],
+    running_tasks: &HashMap<String, usize>,
+    overlay_id: &str,
+    docker_endpoint: Option<&str>,
+    poll_interval: std::time::Duration,
+) -> SwarmSnapshot {
     let mut snapshot = SwarmSnapshot::default();
 
     for service in services {
@@ -166,6 +186,8 @@ pub fn build_snapshot(
             &service_name,
             running_tasks,
             overlay_id,
+            docker_endpoint,
+            poll_interval,
         ) {
             Ok(pc) => snapshot.routes.push(pc),
             Err(reason) => snapshot.skipped.push(SkippedService {
@@ -185,6 +207,8 @@ fn service_config(
     service_name: &str,
     running_tasks: &HashMap<String, usize>,
     overlay_id: &str,
+    docker_endpoint: Option<&str>,
+    poll_interval: std::time::Duration,
 ) -> Result<ProviderConfig, SkipReason> {
     if service_id.is_empty() {
         return Err(SkipReason::MissingId);
@@ -225,7 +249,42 @@ fn service_config(
         .unwrap_or(DEFAULT_MC_PORT);
     let address = SocketAddr::new(vip, port).to_string();
 
-    let config = service_labels_to_server_config(service_name, &labels, &address);
+    let mut config = service_labels_to_server_config(service_name, &labels, &address);
+    if let Some(endpoint) = docker_endpoint
+        && labels
+            .get("infrarust.swarm.scale")
+            .is_some_and(|v| v.trim() == "true")
+    {
+        let idle_timeout = Some(
+            duration_label(&labels, "infrarust.swarm.idle_timeout")
+                .unwrap_or(std::time::Duration::from_secs(300)),
+        );
+        let min_uptime = duration_label(&labels, "infrarust.swarm.min_uptime");
+        let cooldown = duration_label(&labels, "infrarust.swarm.cooldown");
+        let start_timeout = duration_label(&labels, "infrarust.swarm.wake_timeout")
+            .unwrap_or(std::time::Duration::from_secs(60));
+        let shutdown_timeout = duration_label(&labels, "infrarust.swarm.shutdown_timeout")
+            .unwrap_or(std::time::Duration::from_secs(30));
+        let readiness_timeout = duration_label(&labels, "infrarust.swarm.readiness_timeout")
+            .unwrap_or(std::time::Duration::from_secs(3));
+        let min_replicas = number_label(&labels, "infrarust.swarm.min_replicas", 0, 1);
+        let max_replicas = number_label(&labels, "infrarust.swarm.max_replicas", 1, 1);
+        config.server_manager = Some(ServerManagerConfig::DockerSwarm(DockerSwarmManagerConfig {
+            endpoint: endpoint.to_string(),
+            service_id: service_id.to_string(),
+            game_port: port,
+            network_id: Some(overlay_id.to_string()),
+            min_replicas,
+            max_replicas,
+            shutdown_after: idle_timeout,
+            min_uptime,
+            cooldown,
+            start_timeout,
+            shutdown_timeout,
+            readiness_timeout,
+            poll_interval,
+        }));
+    }
     match infrarust_config::validate_server_config(&config) {
         Ok(warnings) => {
             for warning in warnings {
@@ -239,6 +298,31 @@ fn service_config(
         id: ProviderId::docker(format!("{SWARM_KEY_PREFIX}{service_id}")),
         config,
     })
+}
+
+fn duration_label(labels: &HashMap<String, String>, key: &str) -> Option<std::time::Duration> {
+    labels
+        .get(key)
+        .and_then(|value| match humantime::parse_duration(value.trim()) {
+            Ok(duration) => Some(duration),
+            Err(error) => {
+                tracing::warn!(label = %key, %error, "ignoring invalid Swarm autoscale duration");
+                None
+            }
+        })
+}
+
+fn number_label(labels: &HashMap<String, String>, key: &str, default: u8, max: u8) -> u8 {
+    let Some(value) = labels.get(key) else {
+        return default;
+    };
+    match value.trim().parse::<u8>() {
+        Ok(number) if number <= max => number,
+        _ => {
+            tracing::warn!(label = %key, value = %value, "ignoring unsupported Swarm autoscale replica bound");
+            default
+        }
+    }
 }
 
 /// Accepts exactly one replicated service with 0 or 1 replicas.

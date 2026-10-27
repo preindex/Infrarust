@@ -99,6 +99,20 @@ impl ProxyServer {
         let favicon_cache =
             Arc::new(FaviconCache::load_from_configs(&[], config.default_motd.as_ref()).await?);
 
+        // Keep a manager available even when no managed server is present at
+        // startup: Swarm discovery can add a labelled zero-replica service later.
+        let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+        let bus = Arc::clone(&event_bus);
+        service.add_on_state_change(Arc::new(move |server_id, old, new| {
+            let api_old = convert_server_state(old);
+            let api_new = convert_server_state(new);
+            bus.post(ServerStateChangeEvent::new(
+                ServerId::new(server_id),
+                api_old,
+                api_new,
+            ));
+        }));
+
         let mut provider_registry = ProviderRegistry::new(
             Arc::clone(&domain_router),
             Arc::clone(&event_bus),
@@ -111,6 +125,7 @@ impl ProxyServer {
                 .map(|forwarding| forwarding.mode.clone())
                 .unwrap_or_default(),
         );
+        provider_registry.set_server_manager(Arc::clone(&service));
 
         provider_registry.add_provider(Box::new(FileProvider::new(config.servers_dir.clone())));
 
@@ -140,36 +155,7 @@ impl ProxyServer {
             }
         });
 
-        let managed_configs: Vec<(String, infrarust_config::ServerManagerConfig)> = domain_router
-            .list_all()
-            .iter()
-            .filter_map(|(_pid, c)| {
-                c.server_manager
-                    .as_ref()
-                    .map(|sm| (c.effective_id(), sm.clone()))
-            })
-            .collect();
-
-        let server_manager = if managed_configs.is_empty() {
-            None
-        } else {
-            let http_client = reqwest::Client::new();
-            let service = ServerManagerService::new(&managed_configs, http_client);
-
-            let bus = Arc::clone(&event_bus);
-            service.add_on_state_change(Arc::new(move |server_id, old, new| {
-                let api_old = convert_server_state(old);
-                let api_new = convert_server_state(new);
-                bus.post(ServerStateChangeEvent::new(
-                    ServerId::new(server_id),
-                    api_old,
-                    api_new,
-                ));
-            }));
-
-            tracing::info!(count = managed_configs.len(), "server manager initialized");
-            Some(Arc::new(service))
-        };
+        let server_manager = Some(Arc::clone(&service));
 
         let favicon_configs: Vec<(String, Arc<infrarust_config::ServerConfig>)> = domain_router
             .list_all()

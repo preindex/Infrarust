@@ -296,8 +296,17 @@ These labels go under `deploy.labels`. They are the container labels above, plus
 | `infrarust.motd.<state>.text` | string | none | MOTD for `online`, `sleeping`, `starting`, `crashed`, `stopping`, or `unreachable`. |
 | `infrarust.motd.<state>.version_name` | string | none | Version name shown with that MOTD state. |
 | `infrarust.motd.<state>.max_players` | integer | none | Player count shown with that MOTD state. |
+| `infrarust.swarm.scale` | `"true"` | disabled | Explicitly opts this service into singleton scale-to-zero management. |
+| `infrarust.swarm.idle_timeout` | duration | `"5m"` | Idle time before the service scales from one replica to zero. |
+| `infrarust.swarm.min_uptime` | duration | `"0s"` | Minimum time online before idle scale-down is allowed. |
+| `infrarust.swarm.cooldown` | duration | `"0s"` | Minimum time after the last scale action before scale-down. |
+| `infrarust.swarm.min_replicas` | `0` or `1` | `0` | Set to `1` to disable scale-to-zero. |
+| `infrarust.swarm.max_replicas` | `1` | `1` | Must remain `1`; stateful Minecraft services are never scaled out. |
+| `infrarust.swarm.wake_timeout` | duration | `"60s"` | Maximum time a joining player waits for readiness. |
+| `infrarust.swarm.readiness_timeout` | duration | `"3s"` | Timeout for each Minecraft status probe to the service VIP. |
+| `infrarust.swarm.shutdown_timeout` | duration | `"30s"` | Maximum wait for old tasks to stop after scaling down. |
 
-An invalid value is logged and ignored. Only that setting falls back to its default. Labels never carry secrets: server-manager credentials and favicon data cannot be set from labels, so put them in the server config file instead.
+An invalid value is logged and ignored. Only that setting falls back to its default. Labels never carry secrets: credentials and favicon data cannot be set from labels, so put them in the server config file instead. `infrarust.swarm.scale: "true"` is the only opt-in to autoscaling; discovery creates a `DockerSwarm` manager config using the service's immutable ID, the configured Docker endpoint, and the overlay network ID. This lets a service be discovered and woken from zero replicas without a per-server TOML file. A join holds demand while the service starts, and the manager only reports it ready after a Minecraft status ping succeeds.
 
 ### Swarm example with service labels
 
@@ -324,6 +333,10 @@ An invalid value is logged and ignored. Only that setting falls back to its defa
         infrarust.motd.text: "§bCreative"
         infrarust.motd.sleeping.text: "§7Sleeping, join to wake up"
         infrarust.motd.sleeping.version_name: "Creative"
+        infrarust.swarm.scale: "true"
+        infrarust.swarm.idle_timeout: "10m"
+        infrarust.swarm.min_uptime: "2m"
+        infrarust.swarm.cooldown: "1m"
 ```
 
 ## How discovery works

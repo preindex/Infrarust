@@ -468,7 +468,13 @@ impl DockerProvider {
             swarm::count_running_tasks(&tasks)
         };
 
-        Ok(swarm::build_snapshot(&services, &running, &overlay_id))
+        Ok(swarm::build_snapshot_with_endpoint(
+            &services,
+            &running,
+            &overlay_id,
+            Some(&self.config.endpoint),
+            self.config.poll_interval,
+        ))
     }
 
     /// Logs skipped services, once per change, and records the new skip set.
