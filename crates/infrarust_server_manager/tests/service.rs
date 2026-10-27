@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use infrarust_server_manager::{
-    PlayerCounter, ProviderStatus, ServerManagerError, ServerManagerService, ServerProvider,
-    ServerState,
+    LifecyclePolicy, PlayerCounter, ProviderStatus, ServerManagerError, ServerManagerService,
+    ServerProvider, ServerState,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -82,16 +82,18 @@ impl PlayerCounter for MockPlayerCounter {
 
 #[tokio::test]
 async fn test_ensure_started_already_online() {
-    let service = ServerManagerService::new(&[], reqwest::Client::new());
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     let provider = Arc::new(MockProvider::new(ProviderStatus::Running));
 
-    service.register_server(
-        "test".to_string(),
-        provider.clone(),
-        None,
-        Duration::from_secs(10),
-        Duration::from_secs(5),
-    );
+    service
+        .register_server(
+            "test".to_string(),
+            provider.clone(),
+            LifecyclePolicy::default(),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        )
+        .unwrap();
 
     // Set state to Online via initial health check
     service.initial_health_check().await;
@@ -109,18 +111,20 @@ async fn test_ensure_started_sleeping_wakes_up() {
     let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     let provider = Arc::new(MockProvider::new(ProviderStatus::Stopped));
 
-    service.register_server(
-        "test".to_string(),
-        provider.clone(),
-        None,
-        Duration::from_secs(10),
-        Duration::from_secs(1),
-    );
+    service
+        .register_server(
+            "test".to_string(),
+            provider.clone(),
+            LifecyclePolicy::default(),
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+        )
+        .unwrap();
 
     // Start monitoring
     let shutdown = CancellationToken::new();
     let counter = Arc::new(MockPlayerCounter);
-    let _handles = service.start_monitoring(counter, shutdown.clone());
+    service.start_monitoring(counter, shutdown.clone());
 
     // Spawn ensure_started in background — it will block until Online
     let svc = Arc::clone(&service);
@@ -150,18 +154,20 @@ async fn test_ensure_started_timeout() {
     let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     let provider = Arc::new(MockProvider::new(ProviderStatus::Stopped));
 
-    service.register_server(
-        "test".to_string(),
-        provider.clone(),
-        None,
-        Duration::from_secs(2), // Short timeout
-        Duration::from_secs(1),
-    );
+    service
+        .register_server(
+            "test".to_string(),
+            provider.clone(),
+            LifecyclePolicy::default(),
+            Duration::from_secs(2), // Short timeout
+            Duration::from_secs(1),
+        )
+        .unwrap();
 
     // Start monitoring
     let shutdown = CancellationToken::new();
     let counter = Arc::new(MockPlayerCounter);
-    let _handles = service.start_monitoring(counter, shutdown.clone());
+    service.start_monitoring(counter, shutdown.clone());
 
     // Provider stays in Starting forever (never becomes Running)
     let result = service.ensure_started("test").await;
@@ -178,17 +184,19 @@ async fn test_ensure_started_multiple_waiters() {
     let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     let provider = Arc::new(MockProvider::new(ProviderStatus::Stopped));
 
-    service.register_server(
-        "test".to_string(),
-        provider.clone(),
-        None,
-        Duration::from_secs(10),
-        Duration::from_secs(1),
-    );
+    service
+        .register_server(
+            "test".to_string(),
+            provider.clone(),
+            LifecyclePolicy::default(),
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+        )
+        .unwrap();
 
     let shutdown = CancellationToken::new();
     let counter = Arc::new(MockPlayerCounter);
-    let _handles = service.start_monitoring(counter, shutdown.clone());
+    service.start_monitoring(counter, shutdown.clone());
 
     // Spawn 3 concurrent waiters
     let mut handles = vec![];
@@ -222,20 +230,25 @@ async fn test_auto_shutdown_after_idle() {
     let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     let provider = Arc::new(MockProvider::new(ProviderStatus::Running));
 
-    service.register_server(
-        "test".to_string(),
-        provider.clone(),
-        Some(Duration::from_secs(1)), // Auto-shutdown after 1s idle
-        Duration::from_secs(10),
-        Duration::from_millis(500), // Fast polling for test
-    );
+    service
+        .register_server(
+            "test".to_string(),
+            provider.clone(),
+            LifecyclePolicy {
+                idle_timeout: Some(Duration::from_secs(1)), // Auto-shutdown after 1s idle
+                ..LifecyclePolicy::default()
+            },
+            Duration::from_secs(10),
+            Duration::from_millis(500), // Fast polling for test
+        )
+        .unwrap();
 
     service.initial_health_check().await;
     assert_eq!(service.get_state("test"), Some(ServerState::Online));
 
     let shutdown = CancellationToken::new();
     let counter = Arc::new(MockPlayerCounter); // Always returns 0 players
-    let _handles = service.start_monitoring(counter, shutdown.clone());
+    service.start_monitoring(counter, shutdown.clone());
 
     // Wait long enough for auto-shutdown to trigger:
     // First poll at 3s (500ms * 6), sets last_player_seen
@@ -249,16 +262,18 @@ async fn test_auto_shutdown_after_idle() {
 
 #[tokio::test]
 async fn test_register_custom_provider() {
-    let service = ServerManagerService::new(&[], reqwest::Client::new());
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     let provider = Arc::new(MockProvider::new(ProviderStatus::Running));
 
-    service.register_server(
-        "custom".to_string(),
-        provider,
-        None,
-        Duration::from_secs(10),
-        Duration::from_secs(5),
-    );
+    service
+        .register_server(
+            "custom".to_string(),
+            provider,
+            LifecyclePolicy::default(),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        )
+        .unwrap();
 
     assert_eq!(service.get_state("custom"), Some(ServerState::Sleeping));
 
@@ -268,22 +283,26 @@ async fn test_register_custom_provider() {
 
 #[tokio::test]
 async fn test_get_all_managed() {
-    let service = ServerManagerService::new(&[], reqwest::Client::new());
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
 
-    service.register_server(
-        "a".to_string(),
-        Arc::new(MockProvider::new(ProviderStatus::Running)),
-        None,
-        Duration::from_secs(10),
-        Duration::from_secs(5),
-    );
-    service.register_server(
-        "b".to_string(),
-        Arc::new(MockProvider::new(ProviderStatus::Stopped)),
-        None,
-        Duration::from_secs(10),
-        Duration::from_secs(5),
-    );
+    service
+        .register_server(
+            "a".to_string(),
+            Arc::new(MockProvider::new(ProviderStatus::Running)),
+            LifecyclePolicy::default(),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+    service
+        .register_server(
+            "b".to_string(),
+            Arc::new(MockProvider::new(ProviderStatus::Stopped)),
+            LifecyclePolicy::default(),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        )
+        .unwrap();
 
     let all = service.get_all_managed();
     assert_eq!(all.len(), 2);
@@ -291,7 +310,7 @@ async fn test_get_all_managed() {
 
 #[tokio::test]
 async fn test_server_not_found() {
-    let service = ServerManagerService::new(&[], reqwest::Client::new());
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
 
     let result = service.ensure_started("nonexistent").await;
     assert!(matches!(
@@ -302,16 +321,18 @@ async fn test_server_not_found() {
 
 #[tokio::test]
 async fn test_manual_start_stop() {
-    let service = ServerManagerService::new(&[], reqwest::Client::new());
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     let provider = Arc::new(MockProvider::new(ProviderStatus::Stopped));
 
-    service.register_server(
-        "test".to_string(),
-        provider.clone(),
-        None,
-        Duration::from_secs(10),
-        Duration::from_secs(5),
-    );
+    service
+        .register_server(
+            "test".to_string(),
+            provider.clone(),
+            LifecyclePolicy::default(),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        )
+        .unwrap();
 
     service.start_server("test").await.unwrap();
     assert!(provider.start_called.load(Ordering::Acquire));
@@ -366,13 +387,15 @@ async fn test_joined_waiter_receives_the_provider_start_error() {
         release: tokio::sync::Notify::new(),
     });
 
-    service.register_server(
-        "test".to_string(),
-        provider.clone(),
-        None,
-        Duration::from_secs(10),
-        Duration::from_secs(1),
-    );
+    service
+        .register_server(
+            "test".to_string(),
+            provider.clone(),
+            LifecyclePolicy::default(),
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+        )
+        .unwrap();
 
     let svc = Arc::clone(&service);
     let first = tokio::spawn(async move { svc.ensure_started("test").await });
@@ -408,17 +431,19 @@ async fn test_waiter_learns_the_server_went_back_to_sleep() {
     let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     let provider = Arc::new(MockProvider::new(ProviderStatus::Stopped));
 
-    service.register_server(
-        "test".to_string(),
-        provider.clone(),
-        None,
-        Duration::from_secs(10),
-        Duration::from_millis(100),
-    );
+    service
+        .register_server(
+            "test".to_string(),
+            provider.clone(),
+            LifecyclePolicy::default(),
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+        )
+        .unwrap();
 
     let shutdown = CancellationToken::new();
     let counter = Arc::new(MockPlayerCounter);
-    let _handles = service.start_monitoring(counter, shutdown.clone());
+    service.start_monitoring(counter, shutdown.clone());
 
     let svc = Arc::clone(&service);
     let handle = tokio::spawn(async move { svc.ensure_started("test").await });
@@ -450,17 +475,19 @@ async fn test_stopped_polls_during_start_keep_the_waiter_waiting() {
         ProviderStatus::Stopped,
     ));
 
-    service.register_server(
-        "test".to_string(),
-        provider.clone(),
-        None,
-        Duration::from_secs(10),
-        Duration::from_millis(20),
-    );
+    service
+        .register_server(
+            "test".to_string(),
+            provider.clone(),
+            LifecyclePolicy::default(),
+            Duration::from_secs(10),
+            Duration::from_millis(20),
+        )
+        .unwrap();
 
     let shutdown = CancellationToken::new();
     let counter = Arc::new(MockPlayerCounter);
-    let _handles = service.start_monitoring(counter, shutdown.clone());
+    service.start_monitoring(counter, shutdown.clone());
 
     let svc = Arc::clone(&service);
     let handle = tokio::spawn(async move { svc.ensure_started("test").await });

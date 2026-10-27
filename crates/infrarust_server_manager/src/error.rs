@@ -43,6 +43,9 @@ pub enum ServerManagerError {
     #[error("server {server_id} went back to sleep before coming online")]
     WentToSleep { server_id: String },
 
+    #[error("invalid lifecycle policy for {server_id}: {reason}")]
+    InvalidPolicy { server_id: String, reason: String },
+
     #[error("shutdown in progress")]
     Shutdown,
 }

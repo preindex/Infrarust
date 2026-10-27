@@ -21,5 +21,5 @@ pub use error::ServerManagerError;
 pub use local::LocalProvider;
 pub use provider::{ProviderStatus, ServerProvider};
 pub use pterodactyl::PterodactylProvider;
-pub use service::{PlayerCounter, ServerManagerService};
+pub use service::{DemandLease, LifecyclePolicy, PlayerCounter, ServerManagerService};
 pub use state::ServerState;

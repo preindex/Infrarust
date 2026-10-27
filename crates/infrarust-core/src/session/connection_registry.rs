@@ -139,7 +139,7 @@ impl ConnectionRegistry {
     pub fn count_by_server(&self, server_id: &str) -> usize {
         self.sessions
             .iter()
-            .filter(|r| r.counted_server().is_some_and(|s| s.as_str() == server_id))
+            .filter(|r| r.counts_toward(server_id))
             .count()
     }
 
@@ -379,6 +379,25 @@ mod tests {
         assert_eq!(registry.count_by_server("lobby"), 0);
         assert_eq!(registry.count_by_server("survival"), 1);
         assert!(registry.find_by_server("lobby").is_empty());
+    }
+
+    #[test]
+    fn a_transfer_counts_on_both_source_and_destination() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let (held, _rx) = PlayerSession::new_test(true);
+        let _guard = registry.register(Arc::clone(&held));
+        held.set_current_server(ServerId::new("lobby"));
+
+        held.set_pending_server(ServerId::new("survival"));
+
+        assert_eq!(held.current_server(), Some(ServerId::new("lobby")));
+        assert_eq!(registry.count_by_server("lobby"), 1);
+        assert_eq!(registry.count_by_server("survival"), 1);
+
+        held.set_current_server(ServerId::new("survival"));
+
+        assert_eq!(registry.count_by_server("lobby"), 0);
+        assert_eq!(registry.count_by_server("survival"), 1);
     }
 
     #[test]

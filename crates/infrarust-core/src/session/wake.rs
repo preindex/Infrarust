@@ -41,6 +41,18 @@ pub(crate) async fn wake(
         return Ok(false);
     }
     let managed_id = config.effective_id();
+    // Hold demand for the whole wake, including the Online fast path, so an
+    // idle stop cannot begin between this check and the player being recorded.
+    let _demand = match manager.acquire_demand(&managed_id) {
+        Ok(lease) => lease,
+        Err(ServerManagerError::ServerNotFound { .. }) => return Ok(false),
+        Err(ServerManagerError::InvalidState { .. }) => {
+            return Err(Unavailable::new(STOPPING_MESSAGE, "the server is stopping"));
+        }
+        Err(error) => {
+            return Err(Unavailable::new(UNAVAILABLE_MESSAGE, error.to_string()));
+        }
+    };
     let Some(state) = manager.get_state(&managed_id) else {
         return Ok(false);
     };
