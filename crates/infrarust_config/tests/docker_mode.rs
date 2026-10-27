@@ -67,6 +67,20 @@ fn docker_mode_swarm_requires_a_network() {
 }
 
 #[test]
+fn docker_mode_swarm_does_not_require_a_file_provider_directory() {
+    let missing = std::path::Path::new("/definitely/not/a/servers/directory");
+    let config = proxy_from_toml(
+        r#"
+        [docker]
+        mode = "swarm"
+        network = "mc-overlay"
+    "#,
+        missing,
+    );
+    assert!(validate_proxy_config(&config).is_ok());
+}
+
+#[test]
 fn docker_mode_rejects_unknown_values() {
     let result: Result<ProxyConfig, _> = toml::from_str(
         r#"

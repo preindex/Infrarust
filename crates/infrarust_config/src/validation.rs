@@ -249,7 +249,11 @@ pub fn validate_server_configs(configs: &[ServerConfig]) -> Result<(), ConfigErr
 }
 
 pub fn validate_proxy_config(config: &ProxyConfig) -> Result<Vec<String>, ConfigError> {
-    if !config.servers_dir.is_dir() {
+    let swarm_discovery = config
+        .docker
+        .as_ref()
+        .is_some_and(|docker| docker.mode == DockerMode::Swarm);
+    if !swarm_discovery && !config.servers_dir.is_dir() {
         return Err(ConfigError::DirectoryNotFound(config.servers_dir.clone()));
     }
 
@@ -337,7 +341,10 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, Conf
 
     if let Some(docker) = &config.docker
         && docker.mode == DockerMode::Swarm
-        && docker.network.as_deref().is_none_or(|n| n.trim().is_empty())
+        && docker
+            .network
+            .as_deref()
+            .is_none_or(|n| n.trim().is_empty())
     {
         return Err(ConfigError::Proxy(
             ProxyValidationError::DockerSwarmNetworkRequired,

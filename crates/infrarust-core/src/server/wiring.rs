@@ -6,7 +6,7 @@ use tokio_util::task::TaskTracker;
 
 use infrarust_api::events::proxy::ServerStateChangeEvent;
 use infrarust_api::types::ServerId;
-use infrarust_config::{ForwardingMode as ConfigForwardingMode, ProxyConfig};
+use infrarust_config::{DockerMode, ForwardingMode as ConfigForwardingMode, ProxyConfig};
 use infrarust_protocol::build_default_registry;
 use infrarust_server_manager::ServerManagerService;
 use infrarust_transport::BackendConnector;
@@ -127,7 +127,15 @@ impl ProxyServer {
         );
         provider_registry.set_server_manager(Arc::clone(&service));
 
-        provider_registry.add_provider(Box::new(FileProvider::new(config.servers_dir.clone())));
+        let swarm_discovery = config
+            .docker
+            .as_ref()
+            .is_some_and(|docker| docker.mode == DockerMode::Swarm);
+        if swarm_discovery {
+            tracing::info!("file provider disabled in Docker Swarm discovery mode");
+        } else {
+            provider_registry.add_provider(Box::new(FileProvider::new(config.servers_dir.clone())));
+        }
 
         #[cfg(feature = "docker")]
         if let Some(ref docker_config) = config.docker {
