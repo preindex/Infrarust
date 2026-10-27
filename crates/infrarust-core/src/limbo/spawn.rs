@@ -24,6 +24,8 @@ use crate::session::client_bridge::ClientBridge;
 
 const LIMBO_DIMENSION_NAME: &str = "minecraft:the_end";
 const LIMBO_DIMENSION_ID: i32 = 2;
+// Modern clients treat entity ID zero as unassigned.
+const LIMBO_PLAYER_ENTITY_ID: i32 = 1;
 const LIMBO_NUM_SECTIONS: usize = 16;
 const LIMBO_DIM: DimensionInfo = DimensionInfo::Legacy(1);
 
@@ -267,7 +269,7 @@ pub(crate) fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGam
     if version.less_than(ProtocolVersion::V1_16) {
         let raw_payload = build_pre_1_16_join_game_payload(version)?;
         return Ok(CJoinGame {
-            entity_id: 0,
+            entity_id: LIMBO_PLAYER_ENTITY_ID,
             raw_payload: Some(raw_payload),
             ..Default::default()
         });
@@ -276,14 +278,14 @@ pub(crate) fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGam
     if version.less_than(ProtocolVersion::V1_20_2) {
         let raw_payload = build_1_16_to_1_20_1_join_game_payload(version)?;
         return Ok(CJoinGame {
-            entity_id: 0,
+            entity_id: LIMBO_PLAYER_ENTITY_ID,
             raw_payload: Some(raw_payload),
             ..Default::default()
         });
     }
 
     Ok(CJoinGame {
-        entity_id: 0,
+        entity_id: LIMBO_PLAYER_ENTITY_ID,
         is_hardcore: false,
         gamemode: 2, // adventure
         previous_gamemode: -1,
@@ -467,7 +469,7 @@ mod tests {
             result.err()
         );
         let pkt = result.unwrap();
-        assert_eq!(pkt.entity_id, 0);
+        assert_eq!(pkt.entity_id, LIMBO_PLAYER_ENTITY_ID);
         let raw = pkt.raw_payload.expect("should have raw_payload");
         assert_eq!(raw.len(), 12);
     }
@@ -544,7 +546,7 @@ mod tests {
                 result.err()
             );
             let pkt = result.unwrap();
-            assert_eq!(pkt.entity_id, 0);
+            assert_eq!(pkt.entity_id, LIMBO_PLAYER_ENTITY_ID);
             assert!(
                 pkt.raw_payload.is_some(),
                 "version {:?} should use raw_payload",
@@ -559,6 +561,7 @@ mod tests {
             ProtocolVersion::V1_20_2,
             ProtocolVersion::V1_21,
             ProtocolVersion::V1_21_5,
+            ProtocolVersion::V26_3,
         ] {
             let result = build_limbo_join_game(version);
             assert!(
@@ -567,7 +570,9 @@ mod tests {
                 version,
                 result.err()
             );
-            assert!(result.unwrap().raw_payload.is_none());
+            let pkt = result.unwrap();
+            assert_eq!(pkt.entity_id, LIMBO_PLAYER_ENTITY_ID);
+            assert!(pkt.raw_payload.is_none());
         }
     }
 
