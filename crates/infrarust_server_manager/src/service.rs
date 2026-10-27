@@ -332,42 +332,9 @@ impl ServerManagerService {
         let service = Self::empty();
 
         for (server_id, config) in server_configs {
-            let (provider, shutdown_after, start_timeout, poll_interval): (
-                Arc<dyn ServerProvider>,
-                Option<Duration>,
-                Duration,
-                Duration,
-            ) = match config {
-                ServerManagerConfig::Local(cfg) => (
-                    Arc::new(LocalProvider::new(cfg.clone())),
-                    cfg.shutdown_after,
-                    cfg.start_timeout,
-                    cfg.poll_interval,
-                ),
-                ServerManagerConfig::Pterodactyl(cfg) => (
-                    Arc::new(PterodactylProvider::new(cfg, http_client.clone())),
-                    cfg.shutdown_after,
-                    cfg.start_timeout,
-                    cfg.poll_interval,
-                ),
-                ServerManagerConfig::Crafty(cfg) => (
-                    Arc::new(CraftyProvider::new(cfg, http_client.clone())),
-                    cfg.shutdown_after,
-                    cfg.start_timeout,
-                    cfg.poll_interval,
-                ),
-                ServerManagerConfig::DockerSwarm(cfg) => (
-                    Arc::new(SwarmServerProvider::new(cfg)),
-                    cfg.shutdown_after,
-                    cfg.start_timeout,
-                    cfg.poll_interval,
-                ),
-            };
+            let (provider, policy, start_timeout, poll_interval) =
+                Self::provider_settings(config, &http_client);
 
-            let policy = LifecyclePolicy {
-                idle_timeout: shutdown_after,
-                ..LifecyclePolicy::default()
-            };
             service.insert_entry(
                 server_id.clone(),
                 provider,
@@ -380,6 +347,75 @@ impl ServerManagerService {
         }
 
         service
+    }
+
+    fn provider_settings(
+        config: &ServerManagerConfig,
+        http_client: &reqwest::Client,
+    ) -> (Arc<dyn ServerProvider>, LifecyclePolicy, Duration, Duration) {
+        let (
+            provider,
+            shutdown_after,
+            min_uptime,
+            cooldown,
+            min_replicas,
+            start_timeout,
+            poll_interval,
+        ): (
+            Arc<dyn ServerProvider>,
+            Option<Duration>,
+            Duration,
+            Duration,
+            u32,
+            Duration,
+            Duration,
+        ) = match config {
+            ServerManagerConfig::Local(cfg) => (
+                Arc::new(LocalProvider::new(cfg.clone())),
+                cfg.shutdown_after,
+                Duration::ZERO,
+                Duration::ZERO,
+                0,
+                cfg.start_timeout,
+                cfg.poll_interval,
+            ),
+            ServerManagerConfig::Pterodactyl(cfg) => (
+                Arc::new(PterodactylProvider::new(cfg, http_client.clone())),
+                cfg.shutdown_after,
+                Duration::ZERO,
+                Duration::ZERO,
+                0,
+                cfg.start_timeout,
+                cfg.poll_interval,
+            ),
+            ServerManagerConfig::Crafty(cfg) => (
+                Arc::new(CraftyProvider::new(cfg, http_client.clone())),
+                cfg.shutdown_after,
+                Duration::ZERO,
+                Duration::ZERO,
+                0,
+                cfg.start_timeout,
+                cfg.poll_interval,
+            ),
+            ServerManagerConfig::DockerSwarm(cfg) => (
+                Arc::new(SwarmServerProvider::new(cfg)),
+                cfg.shutdown_after,
+                cfg.min_uptime.unwrap_or_default(),
+                cfg.cooldown.unwrap_or_default(),
+                u32::from(cfg.min_replicas),
+                cfg.start_timeout,
+                cfg.poll_interval,
+            ),
+        };
+
+        let policy = LifecyclePolicy {
+            idle_timeout: shutdown_after,
+            min_uptime,
+            cooldown,
+            min_replicas,
+            ..LifecyclePolicy::default()
+        };
+        (provider, policy, start_timeout, poll_interval)
     }
 
     fn empty() -> Self {
@@ -442,6 +478,18 @@ impl ServerManagerService {
         );
         self.ensure_monitor(&server_id);
         Ok(())
+    }
+
+    /// Registers or replaces a server using a config-level provider variant.
+    pub fn register_config(
+        self: &Arc<Self>,
+        server_id: String,
+        config: &ServerManagerConfig,
+        http_client: &reqwest::Client,
+    ) -> Result<(), ServerManagerError> {
+        let (provider, policy, start_timeout, poll_interval) =
+            Self::provider_settings(config, http_client);
+        self.register_server(server_id, provider, policy, start_timeout, poll_interval)
     }
 
     /// Removes a server and stops its monitoring task.
@@ -1137,6 +1185,37 @@ mod tests {
         service.update_state(server_id, ProviderStatus::Running, observed);
         assert_eq!(service.get_state(server_id), Some(ServerState::Online));
         service
+    }
+
+    #[test]
+    fn docker_swarm_config_populates_lifecycle_policy() {
+        let manager_config = infrarust_config::DockerSwarmManagerConfig {
+            endpoint: "tcp://docker:2375".into(),
+            service_id: "service-id".into(),
+            game_port: 25565,
+            network_id: Some("overlay".into()),
+            min_replicas: 1,
+            max_replicas: 1,
+            shutdown_after: Some(Duration::from_secs(90)),
+            min_uptime: Some(Duration::from_secs(120)),
+            cooldown: Some(Duration::from_secs(30)),
+            start_timeout: Duration::from_secs(60),
+            shutdown_timeout: Duration::from_secs(30),
+            readiness_timeout: Duration::from_secs(3),
+            poll_interval: Duration::from_secs(5),
+        };
+        let service = ServerManagerService::new(
+            &[(
+                "managed".to_string(),
+                ServerManagerConfig::DockerSwarm(manager_config),
+            )],
+            reqwest::Client::new(),
+        );
+        let entry = service.entries.get("managed").unwrap();
+        assert_eq!(entry.policy.idle_timeout, Some(Duration::from_secs(90)));
+        assert_eq!(entry.policy.min_uptime, Duration::from_secs(120));
+        assert_eq!(entry.policy.cooldown, Duration::from_secs(30));
+        assert_eq!(entry.policy.min_replicas, 1);
     }
 
     async fn wait_until(mut condition: impl FnMut() -> bool) {

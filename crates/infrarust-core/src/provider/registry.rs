@@ -8,7 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_api::events::proxy::ConfigReloadEvent;
 use infrarust_api::types::ServerId;
-use infrarust_config::{ForwardingMode, ServerConfig};
+use infrarust_config::{ForwardingMode, ServerConfig, ServerManagerConfig};
+use infrarust_server_manager::ServerManagerService;
 
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
@@ -33,6 +34,7 @@ pub struct ProviderRegistry {
     favicon_cache: Arc<FaviconCache>,
     shutdown: CancellationToken,
     default_forwarding: ForwardingMode,
+    server_manager: Option<Arc<ServerManagerService>>,
 }
 
 impl ProviderRegistry {
@@ -52,7 +54,12 @@ impl ProviderRegistry {
             favicon_cache,
             shutdown,
             default_forwarding,
+            server_manager: None,
         }
+    }
+
+    pub fn set_server_manager(&mut self, manager: Arc<ServerManagerService>) {
+        self.server_manager = Some(manager);
     }
 
     /// Registers a provider. Must be called before `start()`.
@@ -70,6 +77,7 @@ impl ProviderRegistry {
     /// Returns `CoreError` if any provider fails to load initial configs fatally.
     pub async fn start(self) -> Result<(JoinHandle<()>, mpsc::Sender<ProviderEvent>), CoreError> {
         let (tx, rx) = mpsc::channel::<ProviderEvent>(256);
+        let mut managed = std::collections::HashMap::new();
 
         // Phase 1: load initial configs from each provider
         for provider in &self.providers {
@@ -87,6 +95,9 @@ impl ProviderRegistry {
                     }
                     for pc in configs {
                         if accepted(&pc, &self.default_forwarding) {
+                            if let Some(manager) = &self.server_manager {
+                                reconcile_manager(manager, &mut managed, &pc);
+                            }
                             self.domain_router.add(pc.id, pc.config);
                         }
                     }
@@ -137,6 +148,8 @@ impl ProviderRegistry {
                 self.favicon_cache,
                 self.shutdown,
                 self.default_forwarding,
+                self.server_manager,
+                managed,
             )
             .await;
             if !shutdown_token.is_cancelled() {
@@ -159,6 +172,8 @@ async fn event_loop(
     favicon_cache: Arc<FaviconCache>,
     shutdown: CancellationToken,
     default_forwarding: ForwardingMode,
+    server_manager: Option<Arc<ServerManagerService>>,
+    mut managed: std::collections::HashMap<String, (String, ServerManagerConfig)>,
 ) {
     loop {
         tokio::select! {
@@ -172,7 +187,24 @@ async fn event_loop(
                     tracing::debug!("all provider senders dropped, event loop exiting");
                     break;
                 };
-                let reloads = apply(&router, &default_forwarding, event);
+                let changes = event.into_changes();
+                if let Some(manager) = &server_manager {
+                    for change in &changes {
+                        match &change {
+                            ProviderChange::Added(pc) | ProviderChange::Updated(pc) => {
+                                if accepted(pc, &default_forwarding) {
+                                    reconcile_manager(manager, &mut managed, pc);
+                                }
+                            }
+                            ProviderChange::Removed(id) => {
+                                if let Some((server_id, _)) = managed.remove(&manager_key(id)) {
+                                    manager.unregister_server(&server_id);
+                                }
+                            }
+                        }
+                    }
+                }
+                let reloads = apply_changes(&router, &default_forwarding, changes);
                 if !reloads.is_empty() {
                     on_config_change(&router, &status_cache, &favicon_cache).await;
                     for reload in reloads {
@@ -194,13 +226,20 @@ fn accepted(pc: &ProviderConfig, default_forwarding: &ForwardingMode) -> bool {
     }
 }
 
+#[cfg(test)]
 fn apply(
     router: &DomainRouter,
     default_forwarding: &ForwardingMode,
     event: ProviderEvent,
 ) -> Vec<ConfigReloadEvent> {
-    let changes = event.into_changes();
+    apply_changes(router, default_forwarding, event.into_changes())
+}
 
+fn apply_changes(
+    router: &DomainRouter,
+    default_forwarding: &ForwardingMode,
+    changes: Vec<ProviderChange>,
+) -> Vec<ConfigReloadEvent> {
     let mut before: Vec<(ProviderId, Option<Arc<ServerConfig>>)> = Vec::new();
     for change in changes {
         let id = match &change {
@@ -270,6 +309,45 @@ fn apply(
     reloads
 }
 
+fn manager_key(id: &ProviderId) -> String {
+    format!("{}@{}", id.provider_type, id.unique_id)
+}
+
+fn reconcile_manager(
+    manager: &Arc<ServerManagerService>,
+    managed: &mut std::collections::HashMap<String, (String, ServerManagerConfig)>,
+    pc: &ProviderConfig,
+) {
+    let key = manager_key(&pc.id);
+    let server_id = pc.config.effective_id();
+    let Some(config) = pc.config.server_manager.as_ref() else {
+        if let Some((old_id, _)) = managed.remove(&key) {
+            manager.unregister_server(&old_id);
+        }
+        return;
+    };
+    if managed
+        .get(&key)
+        .is_some_and(|(old_id, old)| old_id == &server_id && old == config)
+    {
+        return;
+    }
+    if let Some((old_id, _)) = managed.remove(&key)
+        && old_id != server_id
+    {
+        manager.unregister_server(&old_id);
+    }
+    match manager.register_config(server_id.clone(), config, &reqwest::Client::new()) {
+        Ok(()) => {
+            managed.insert(key, (server_id, config.clone()));
+        }
+        Err(error) => {
+            manager.unregister_server(&server_id);
+            tracing::error!(server = %server_id, %error, "failed to register discovered server manager");
+        }
+    }
+}
+
 async fn on_config_change(
     router: &DomainRouter,
     status_cache: &StatusCache,
@@ -291,6 +369,7 @@ async fn on_config_change(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use infrarust_server_manager::ServerState;
 
     fn passthrough(name: &str) -> ProviderConfig {
         ProviderConfig {
@@ -338,5 +417,43 @@ mod tests {
 
         let kept = router.get(&id).expect("the previous config stays routed");
         assert_eq!(kept.forwarding_mode, None);
+    }
+
+    #[test]
+    fn discovered_manager_configs_are_registered_and_unregistered() {
+        let manager = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+        let mut managed = std::collections::HashMap::new();
+        let mut config = passthrough("mc");
+        config.config.server_manager = Some(ServerManagerConfig::DockerSwarm(
+            infrarust_config::DockerSwarmManagerConfig {
+                endpoint: "tcp://docker:2375".into(),
+                service_id: "immutable-service-id".into(),
+                game_port: 25565,
+                network_id: Some("overlay-id".into()),
+                min_replicas: 0,
+                max_replicas: 1,
+                shutdown_after: Some(std::time::Duration::from_secs(90)),
+                min_uptime: Some(std::time::Duration::from_secs(20)),
+                cooldown: Some(std::time::Duration::from_secs(10)),
+                start_timeout: std::time::Duration::from_secs(60),
+                shutdown_timeout: std::time::Duration::from_secs(30),
+                readiness_timeout: std::time::Duration::from_secs(3),
+                poll_interval: std::time::Duration::from_secs(5),
+            },
+        ));
+        reconcile_manager(&manager, &mut managed, &config);
+
+        assert_eq!(manager.get_state("mc"), Some(ServerState::Sleeping));
+        assert_eq!(managed.len(), 1);
+
+        // An unrelated route update with identical manager policy must not
+        // replace the registration and reset its state.
+        reconcile_manager(&manager, &mut managed, &config);
+        assert_eq!(managed.len(), 1);
+
+        config.config.server_manager = None;
+        reconcile_manager(&manager, &mut managed, &config);
+        assert_eq!(manager.get_state("mc"), None);
+        assert!(managed.is_empty());
     }
 }
