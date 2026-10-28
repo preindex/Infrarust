@@ -134,6 +134,10 @@ fn encode_empty_section(
     let needs_data_length = version.less_than(ProtocolVersion::V1_21_5);
 
     w.write_i16_be(0)?;
+    if version.no_less_than(ProtocolVersion::V26_1) {
+        // 26.1 added a fluid-block count alongside the non-empty block count.
+        w.write_i16_be(0)?;
+    }
     w.write_u8(0)?;
     w.write_var_int(&VarInt(0))?;
     if needs_data_length {
@@ -355,6 +359,13 @@ mod tests {
         let mut buf = Vec::new();
         encode_empty_section(&mut buf, ProtocolVersion::V1_21_5).unwrap();
         assert_eq!(buf.len(), 6, "1.21.5+: empty section should be 6 bytes");
+    }
+
+    #[test]
+    fn test_empty_section_26_1_plus_includes_fluid_count() {
+        let mut buf = Vec::new();
+        encode_empty_section(&mut buf, ProtocolVersion::V26_3).unwrap();
+        assert_eq!(buf, [0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]
