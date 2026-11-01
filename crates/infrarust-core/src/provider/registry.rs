@@ -142,14 +142,16 @@ impl ProviderRegistry {
         let handle = tokio::spawn(async move {
             event_loop(
                 rx,
-                self.domain_router,
-                self.event_bus,
-                self.status_cache,
-                self.favicon_cache,
-                self.shutdown,
-                self.default_forwarding,
-                self.server_manager,
-                managed,
+                ProviderEventLoopContext {
+                    router: self.domain_router,
+                    event_bus: self.event_bus,
+                    status_cache: self.status_cache,
+                    favicon_cache: self.favicon_cache,
+                    shutdown: self.shutdown,
+                    default_forwarding: self.default_forwarding,
+                    server_manager: self.server_manager,
+                    managed,
+                },
             )
             .await;
             if !shutdown_token.is_cancelled() {
@@ -164,8 +166,7 @@ impl ProviderRegistry {
 }
 
 /// Receives `ProviderEvent`s and updates the router + caches.
-async fn event_loop(
-    mut rx: mpsc::Receiver<ProviderEvent>,
+struct ProviderEventLoopContext {
     router: Arc<DomainRouter>,
     event_bus: Arc<EventBusImpl>,
     status_cache: Arc<StatusCache>,
@@ -173,12 +174,14 @@ async fn event_loop(
     shutdown: CancellationToken,
     default_forwarding: ForwardingMode,
     server_manager: Option<Arc<ServerManagerService>>,
-    mut managed: std::collections::HashMap<String, (String, ServerManagerConfig)>,
-) {
+    managed: std::collections::HashMap<String, (String, ServerManagerConfig)>,
+}
+
+async fn event_loop(mut rx: mpsc::Receiver<ProviderEvent>, mut context: ProviderEventLoopContext) {
     loop {
         tokio::select! {
             biased;
-            () = shutdown.cancelled() => {
+            () = context.shutdown.cancelled() => {
                 tracing::debug!("provider registry shutting down");
                 break;
             }
@@ -188,27 +191,27 @@ async fn event_loop(
                     break;
                 };
                 let changes = event.into_changes();
-                if let Some(manager) = &server_manager {
+                if let Some(manager) = &context.server_manager {
                     for change in &changes {
                         match &change {
                             ProviderChange::Added(pc) | ProviderChange::Updated(pc) => {
-                                if accepted(pc, &default_forwarding) {
-                                    reconcile_manager(manager, &mut managed, pc);
+                                if accepted(pc, &context.default_forwarding) {
+                                    reconcile_manager(manager, &mut context.managed, pc);
                                 }
                             }
                             ProviderChange::Removed(id) => {
-                                if let Some((server_id, _)) = managed.remove(&manager_key(id)) {
+                                if let Some((server_id, _)) = context.managed.remove(&manager_key(id)) {
                                     manager.unregister_server(&server_id);
                                 }
                             }
                         }
                     }
                 }
-                let reloads = apply_changes(&router, &default_forwarding, changes);
+                let reloads = apply_changes(&context.router, &context.default_forwarding, changes);
                 if !reloads.is_empty() {
-                    on_config_change(&router, &status_cache, &favicon_cache).await;
+                    on_config_change(&context.router, &context.status_cache, &context.favicon_cache).await;
                     for reload in reloads {
-                        event_bus.post(reload);
+                        context.event_bus.post(reload);
                     }
                 }
             }

@@ -98,14 +98,12 @@ pub(crate) async fn run_handler_chain(
                         &chain_result,
                         LimboChainResult::Switch(_) | LimboChainResult::SendToLimbo(_)
                     )
-                {
-                    if let Err(e) =
+                    && let Err(e) =
                         send_spawn_sequence(&mut io.client, ctx.version(), ctx.registry(), true)
                             .await
-                    {
-                        tracing::warn!(error = %e, "failed to send limbo spawn sequence");
-                        return LimboChainResult::Kick(Component::text("Internal error"));
-                    }
+                {
+                    tracing::warn!(error = %e, "failed to send limbo spawn sequence");
+                    return LimboChainResult::Kick(Component::text("Internal error"));
                 }
                 return chain_result;
             }
