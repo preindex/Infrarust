@@ -25,7 +25,7 @@ pub use address::{DomainRewrite, ServerAddress};
 pub use auth::{AuthConfig, OfflineUuidPolicy};
 pub use balance::{BalanceConfig, BalanceStrategy, WeightedAddress};
 pub use ban::{BanConfig, BanProviderSelection};
-pub use docker::DockerProviderConfig;
+pub use docker::{DockerMode, DockerProviderConfig};
 pub use events::EventsConfig;
 pub use forwarding::{BungeeCordChannelPermissions, ForwardingConfig, ForwardingMode};
 pub use health::{ActiveHealthConfig, ProbeKind};
@@ -36,7 +36,8 @@ pub use plugin_messaging::PluginMessagingConfig;
 pub use proxy_mode::ProxyMode;
 pub use rate_limit::RateLimitConfig;
 pub use server_manager::{
-    CraftyManagerConfig, LocalManagerConfig, PterodactylManagerConfig, ServerManagerConfig,
+    CraftyManagerConfig, DockerSwarmManagerConfig, LocalManagerConfig, PterodactylManagerConfig,
+    ServerManagerConfig,
 };
 pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
 pub use telemetry::{MetricsConfig, OtlpProtocol, ResourceConfig, TelemetryConfig, TracesConfig};

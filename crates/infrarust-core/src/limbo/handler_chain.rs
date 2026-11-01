@@ -29,7 +29,7 @@ use super::keepalive::{
     KeepAliveState, KeepAliveTick, extract_keepalive_id, is_keepalive_response,
 };
 use super::session::LimboSessionImpl;
-use super::spawn::send_spawn_sequence;
+use super::spawn::{send_limbo_player_position, send_spawn_sequence};
 use super::virtual_session::VirtualSessionCore;
 use crate::error::CoreError;
 use crate::player::commands::{CommandInbox, CommandOutcome};
@@ -52,6 +52,7 @@ pub(crate) enum LimboChainResult {
 }
 
 const KEEPALIVE_INTERVAL_SECS: u64 = 10;
+const LIMBO_POSITION_REFRESH_INTERVAL: Duration = Duration::from_millis(50);
 const HANDLER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_QUEUED_INPUTS: usize = 16;
 
@@ -90,7 +91,22 @@ pub(crate) async fn run_handler_chain(
 
         match process_handler_result(result) {
             HandlerAction::Continue => continue,
-            HandlerAction::Exit(chain_result) => return chain_result,
+            HandlerAction::Exit(chain_result) => {
+                if needs_join_game
+                    && !spawn_sent
+                    && matches!(
+                        &chain_result,
+                        LimboChainResult::Switch(_) | LimboChainResult::SendToLimbo(_)
+                    )
+                    && let Err(e) =
+                        send_spawn_sequence(&mut io.client, ctx.version(), ctx.registry(), true)
+                            .await
+                {
+                    tracing::warn!(error = %e, "failed to send limbo spawn sequence");
+                    return LimboChainResult::Kick(Component::text("Internal error"));
+                }
+                return chain_result;
+            }
             HandlerAction::Hold(timeout) => {
                 if !spawn_sent {
                     if let Err(e) = send_spawn_sequence(
@@ -113,6 +129,15 @@ pub(crate) async fn run_handler_chain(
                 }
             }
         }
+    }
+
+    if needs_join_game
+        && !spawn_sent
+        && let Err(e) =
+            send_spawn_sequence(&mut io.client, ctx.version(), ctx.registry(), true).await
+    {
+        tracing::warn!(error = %e, "failed to send limbo spawn sequence");
+        return LimboChainResult::Kick(Component::text("Internal error"));
     }
 
     LimboChainResult::Completed
@@ -231,6 +256,12 @@ async fn wait_for_hold(
     } = hold;
     let mut keepalive_interval =
         tokio::time::interval(Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
+    let mut position_refresh = tokio::time::interval_at(
+        tokio::time::Instant::now() + LIMBO_POSITION_REFRESH_INTERVAL,
+        LIMBO_POSITION_REFRESH_INTERVAL,
+    );
+    position_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut teleport_id = 0_i32;
 
     let (timeout_after, on_timeout) = match timeout {
         Some(t) => (Some(t.after), Some(t.on_timeout)),
@@ -331,6 +362,21 @@ async fn wait_for_hold(
                     Ok(KeepAliveTick::Timeout) | Err(_) => {
                         return ControlFlow::Break(LimboChainResult::Timeout);
                     }
+                }
+            }
+
+            _ = position_refresh.tick() => {
+                teleport_id = teleport_id.wrapping_add(1);
+                if send_limbo_player_position(
+                    client,
+                    core.protocol_version,
+                    &core.packet_registry,
+                    teleport_id,
+                )
+                .await
+                .is_err()
+                {
+                    return ControlFlow::Break(LimboChainResult::ClientDisconnected);
                 }
             }
 
@@ -762,6 +808,41 @@ mod tests {
 
         let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         assert!(matches!(result, LimboChainResult::Completed));
+    }
+
+    #[tokio::test]
+    async fn held_player_position_is_refreshed_until_release() {
+        use infrarust_protocol::packets::play::player_position::CSynchronizePlayerPosition;
+
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
+        let mut peer = crate::session::test_peer::Peer::new(p.raw, ProtocolVersion::V1_21);
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(HoldHandler { name: "hold" })];
+
+        complete_later(&p.limbo.session, 250, LimboOutcome::Accept);
+        let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true);
+        tokio::pin!(result);
+
+        let mut position_packets = 0;
+        loop {
+            tokio::select! {
+                result = &mut result => {
+                    assert!(matches!(result, LimboChainResult::Completed));
+                    break;
+                }
+                frame = peer.frame() => {
+                    if frame.id == peer.id::<CSynchronizePlayerPosition>() {
+                        position_packets += 1;
+                    }
+                }
+            }
+        }
+
+        assert!(
+            position_packets >= 3,
+            "expected initial and refreshed position packets"
+        );
     }
 
     /// Completes the session with `completion` during `on_player_enter`, then

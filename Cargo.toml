@@ -20,6 +20,8 @@ members = [
     "plugins/infrarust-plugin-admin-api",
     "plugins/infrarust-plugin-stats",
     "plugins/infrarust-plugin-stats/native",
+    "plugins/infrarust-plugin-floodgate",
+    "plugins/infrarust-plugin-svc",
     "tools/registry-extractor",
     "tools/stress-test",
     "tools/mc-bench",
@@ -27,6 +29,7 @@ members = [
 exclude = [
     "crates/infrarust-loader-wasm/tests/fixtures",
     "plugins/infrarust-plugin-stats/wasm",
+    "plugins/infrarust-plugin-floodgate/wasm",
     "templates/plugin-template",
 ]
 
@@ -198,6 +201,7 @@ infrarust-plugin-server-wake = { path = "plugins/infrarust-plugin-server-wake", 
 infrarust-plugin-admin-api = { path = "plugins/infrarust-plugin-admin-api", version = "2.0.0-beta.4" }
 infrarust-plugin-stats = { path = "plugins/infrarust-plugin-stats", version = "2.0.0-beta.4" }
 infrarust-plugin-stats-native = { path = "plugins/infrarust-plugin-stats/native", version = "2.0.0-beta.4" }
+infrarust-plugin-svc = { path = "plugins/infrarust-plugin-svc", version = "2.0.0-beta.4" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

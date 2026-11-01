@@ -163,6 +163,7 @@ pub struct PlayerSession {
     remote_addr: SocketAddr,
     routing: RwLock<Routing>,
     connected_address: RwLock<Option<ServerAddress>>,
+    backend_remote_addr: RwLock<Option<SocketAddr>>,
     backend_load: Arc<BackendLoad>,
     connected: AtomicBool,
     active: bool,
@@ -281,6 +282,7 @@ impl PlayerSessionBuilder {
                 pending: None,
             }),
             connected_address: RwLock::new(None),
+            backend_remote_addr: RwLock::new(None),
             backend_load: self.backend_load,
             connected: AtomicBool::new(true),
             active: self.kind.active(),
@@ -390,6 +392,7 @@ impl PlayerSession {
     pub fn set_disconnected(&self) {
         self.connected.store(false, Ordering::Release);
         self.set_connected_address(None);
+        self.set_backend_remote_addr(None);
         self.presentation.end();
         lock(&self.connects).clear();
         drop(self.typed_commands.stop());
@@ -417,6 +420,18 @@ impl PlayerSession {
         routing.current.clone().or_else(|| routing.pending.clone())
     }
 
+    /// Whether this player counts toward `server_id`.
+    ///
+    /// A transfer counts on both ends: the source it is leaving and the
+    /// destination it is joining, so neither is seen as idle mid-switch.
+    pub(crate) fn counts_toward(&self, server_id: &str) -> bool {
+        let routing = read(&self.routing);
+        [routing.current.as_ref(), routing.pending.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|server| server.as_str() == server_id)
+    }
+
     pub fn set_connected_address(&self, address: Option<ServerAddress>) {
         let mut guard = write(&self.connected_address);
         if *guard == address {
@@ -432,6 +447,14 @@ impl PlayerSession {
 
     pub fn connected_address(&self) -> Option<ServerAddress> {
         read(&self.connected_address).clone()
+    }
+
+    pub fn set_backend_remote_addr(&self, address: Option<SocketAddr>) {
+        *write(&self.backend_remote_addr) = address;
+    }
+
+    pub fn backend_remote_addr(&self) -> Option<SocketAddr> {
+        *read(&self.backend_remote_addr)
     }
 
     pub fn shutdown_token(&self) -> &CancellationToken {

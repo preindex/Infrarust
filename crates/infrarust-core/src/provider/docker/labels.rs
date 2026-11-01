@@ -1,25 +1,85 @@
 //! Docker label parsing and address resolution.
 //!
-//! Converts Docker container labels (`infrarust.*`) to `ServerConfig`
-//! and resolves container network addresses.
+//! Converts Docker labels (`infrarust.*`) to `ServerConfig` and resolves
+//! container network addresses. Standalone containers accept the original
+//! key set; swarm service labels accept the wider set documented on
+//! [`service_labels_to_server_config`].
 
 use std::collections::HashMap;
 
 use bollard::models::ContainerInspectResponse;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use toml::{Table, Value};
 
-use infrarust_config::{ProxyMode, ServerAddress, ServerConfig};
+use infrarust_config::{
+    BalanceStrategy, DomainRewrite, ForwardingMode, ProxyMode, ServerAddress, ServerConfig,
+};
 
-/// Default Minecraft port.
+/// MOTD states accepted as `infrarust.motd.<state>.*` on swarm services.
+const MOTD_STATES: [&str; 6] = [
+    "online",
+    "sleeping",
+    "starting",
+    "crashed",
+    "stopping",
+    "unreachable",
+];
+
+/// Which label vocabulary applies to a labelled object.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LabelScope {
+    /// Standalone containers: the original `infrarust.*` keys only.
+    Container,
+    /// Swarm services: the container keys plus service-level settings.
+    Service,
+}
+
 /// Converts Docker container labels to a `ServerConfig`.
+///
+/// Only the original container key set is read, so standalone container
+/// discovery behaves exactly as before.
 pub fn labels_to_server_config(
     container_name: &str,
     labels: &HashMap<String, String>,
     address: &str,
 ) -> ServerConfig {
+    build_server_config(container_name, labels, address, LabelScope::Container)
+}
+
+/// Converts swarm service labels (`Spec.Labels`) to a `ServerConfig`.
+///
+/// Accepts the container keys plus these service-level keys:
+///
+/// - `infrarust.forwarding_mode`: `none`, `bungeecord`, `bungeeguard`, `velocity`
+/// - `infrarust.domain_rewrite`: `none`, `from_backend`, or an explicit domain
+/// - `infrarust.motd.<state>.text`, `.version_name`, `.max_players` for
+///   `online`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`
+///   (`infrarust.motd.text` remains an alias for `online`)
+/// - `infrarust.timeouts.connect`, `.read`, `.write` (durations, e.g. `"5s"`)
+/// - `infrarust.max_players`, `infrarust.balance`, `infrarust.limbo_handlers`
+///
+/// Invalid values are logged and ignored one key at a time. Secrets are never
+/// read from labels: server-manager credentials and favicon payloads are not
+/// mapped.
+pub fn service_labels_to_server_config(
+    service_name: &str,
+    labels: &HashMap<String, String>,
+    address: &str,
+) -> ServerConfig {
+    build_server_config(service_name, labels, address, LabelScope::Service)
+}
+
+fn build_server_config(
+    default_id: &str,
+    labels: &HashMap<String, String>,
+    address: &str,
+    scope: LabelScope,
+) -> ServerConfig {
     let domains = labels
         .get("infrarust.domains")
         .map(|d| d.split(',').map(|s| s.trim().to_string()).collect())
-        .unwrap_or_else(|| vec![format!("{container_name}.docker.local")]);
+        .unwrap_or_else(|| vec![format!("{default_id}.docker.local")]);
 
     let proxy_mode = labels
         .get("infrarust.proxy_mode")
@@ -49,10 +109,8 @@ pub fn labels_to_server_config(
     // Deserializing through a toml::Table (instead of a struct literal) keeps
     // serde defaults for all unset fields and escapes label values correctly.
     let built = (|| -> Result<ServerConfig, Box<dyn std::error::Error>> {
-        use toml::{Table, Value};
-
         let mut table = Table::new();
-        table.insert("id".into(), Value::String(container_name.to_string()));
+        table.insert("id".into(), Value::String(default_id.to_string()));
         table.insert(
             "domains".into(),
             Value::Array(domains.iter().cloned().map(Value::String).collect()),
@@ -79,19 +137,22 @@ pub fn labels_to_server_config(
             motd.insert("online".into(), Value::Table(online));
             table.insert("motd".into(), Value::Table(motd));
         }
+        if scope == LabelScope::Service {
+            insert_service_settings(&mut table, labels);
+        }
 
         Ok(table.try_into()?)
     })();
 
     built.unwrap_or_else(|e| {
         tracing::warn!(
-            container = %container_name,
+            container = %default_id,
             error = %e,
             "generated docker server config failed to parse, using minimal fallback"
         );
         // Manual fallback — less complete but functional
         ServerConfig {
-            id: Some(container_name.to_string()),
+            id: Some(default_id.to_string()),
             name,
             network,
             domains,
@@ -114,6 +175,139 @@ pub fn labels_to_server_config(
             bungeecord_channel: false,
         }
     })
+}
+
+/// Adds the swarm-only keys to `table`. Each key is validated on its own so a
+/// bad value only drops that setting.
+fn insert_service_settings(table: &mut Table, labels: &HashMap<String, String>) {
+    if let Some(value) = labels
+        .get("infrarust.forwarding_mode")
+        .and_then(|raw| enum_value::<ForwardingMode>("infrarust.forwarding_mode", raw))
+    {
+        table.insert("forwarding_mode".into(), value);
+    }
+
+    if let Some(value) = labels
+        .get("infrarust.domain_rewrite")
+        .and_then(|raw| domain_rewrite_value(raw))
+    {
+        table.insert("domain_rewrite".into(), value);
+    }
+
+    if let Some(value) = labels
+        .get("infrarust.balance")
+        .and_then(|raw| enum_value::<BalanceStrategy>("infrarust.balance", raw))
+    {
+        table.insert("balance".into(), value);
+    }
+
+    if let Some(players) = labels
+        .get("infrarust.max_players")
+        .and_then(|raw| parse_u32("infrarust.max_players", raw))
+    {
+        table.insert("max_players".into(), Value::Integer(i64::from(players)));
+    }
+
+    if let Some(raw) = labels.get("infrarust.limbo_handlers") {
+        let handlers = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+            .map(|h| Value::String(h.to_string()))
+            .collect();
+        table.insert("limbo_handlers".into(), Value::Array(handlers));
+    }
+
+    let mut timeouts = Table::new();
+    for field in ["connect", "read", "write"] {
+        let key = format!("infrarust.timeouts.{field}");
+        let Some(raw) = labels.get(&key) else {
+            continue;
+        };
+        let raw = raw.trim();
+        if humantime::parse_duration(raw).is_ok() {
+            timeouts.insert(field.into(), Value::String(raw.to_string()));
+        } else {
+            tracing::warn!(label = %key, "ignoring invalid duration label");
+        }
+    }
+    if !timeouts.is_empty() {
+        table.insert("timeouts".into(), Value::Table(timeouts));
+    }
+
+    // `motd` already exists when the legacy `infrarust.motd.text` key was set.
+    let motd = table
+        .entry("motd")
+        .or_insert_with(|| Value::Table(Table::new()));
+    if let Value::Table(motd) = motd {
+        for state in MOTD_STATES {
+            let prefix = format!("infrarust.motd.{state}");
+            let text = labels.get(&format!("{prefix}.text")).or_else(|| {
+                (state == "online")
+                    .then(|| labels.get("infrarust.motd.text"))
+                    .flatten()
+            });
+            let Some(text) = text else {
+                if labels.contains_key(&format!("{prefix}.version_name"))
+                    || labels.contains_key(&format!("{prefix}.max_players"))
+                {
+                    tracing::warn!(
+                        label = %prefix,
+                        "motd state fields ignored without a .text label"
+                    );
+                }
+                continue;
+            };
+
+            let mut entry = Table::new();
+            entry.insert("text".into(), Value::String(text.clone()));
+            if let Some(version) = labels.get(&format!("{prefix}.version_name")) {
+                entry.insert("version_name".into(), Value::String(version.clone()));
+            }
+            if let Some(players) = labels
+                .get(&format!("{prefix}.max_players"))
+                .and_then(|raw| parse_u32(&format!("{prefix}.max_players"), raw))
+            {
+                entry.insert("max_players".into(), Value::Integer(i64::from(players)));
+            }
+            motd.insert(state.to_string(), Value::Table(entry));
+        }
+    }
+}
+
+/// Parses an enum-valued label through its serde representation, so the
+/// accepted spellings (and aliases) match the config file.
+fn enum_value<T>(key: &str, raw: &str) -> Option<Value>
+where
+    T: DeserializeOwned + Serialize,
+{
+    match Value::String(raw.trim().to_string()).try_into::<T>() {
+        Ok(parsed) => Value::try_from(parsed).ok(),
+        Err(e) => {
+            tracing::warn!(label = %key, error = %e, "ignoring invalid label value");
+            None
+        }
+    }
+}
+
+fn domain_rewrite_value(raw: &str) -> Option<Value> {
+    let rewrite = match raw.trim() {
+        "" => return None,
+        "none" => DomainRewrite::None,
+        "from_backend" => DomainRewrite::FromBackend,
+        domain => DomainRewrite::Explicit(domain.to_string()),
+    };
+    Value::try_from(rewrite).ok()
+}
+
+fn parse_u32(key: &str, raw: &str) -> Option<u32> {
+    match raw.trim().parse::<u32>() {
+        Ok(n) => Some(n),
+        Err(_) => {
+            tracing::warn!(label = %key, "ignoring label: expected a non-negative integer");
+            None
+        }
+    }
 }
 
 /// Resolves the best address for a Docker container.

@@ -1,0 +1,11 @@
+# Install as <plugins_dir>/floodgate/config.toml beside the built floodgate.wasm.
+# trusted_sources must contain only Geyser's TCP peer address(es). Keep PROXY
+# protocol disabled: beta.4 guest events do not expose the separate TCP peer.
+key_file = "/keys/key.pem"
+trusted_sources = ["10.66.0.3/32"]
+username_prefix = "."
+replace_spaces = true
+pending_ttl_seconds = 30
+replay_ttl_seconds = 3600
+max_pending = 4096
+max_replays = 16384

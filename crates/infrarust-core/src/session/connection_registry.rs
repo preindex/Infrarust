@@ -139,7 +139,7 @@ impl ConnectionRegistry {
     pub fn count_by_server(&self, server_id: &str) -> usize {
         self.sessions
             .iter()
-            .filter(|r| r.counted_server().is_some_and(|s| s.as_str() == server_id))
+            .filter(|r| r.counts_toward(server_id))
             .count()
     }
 
@@ -382,6 +382,25 @@ mod tests {
     }
 
     #[test]
+    fn a_transfer_counts_on_both_source_and_destination() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let (held, _rx) = PlayerSession::new_test(true);
+        let _guard = registry.register(Arc::clone(&held));
+        held.set_current_server(ServerId::new("lobby"));
+
+        held.set_pending_server(ServerId::new("survival"));
+
+        assert_eq!(held.current_server(), Some(ServerId::new("lobby")));
+        assert_eq!(registry.count_by_server("lobby"), 1);
+        assert_eq!(registry.count_by_server("survival"), 1);
+
+        held.set_current_server(ServerId::new("survival"));
+
+        assert_eq!(registry.count_by_server("lobby"), 0);
+        assert_eq!(registry.count_by_server("survival"), 1);
+    }
+
+    #[test]
     fn per_address_count_lifecycle() {
         let registry = Arc::new(ConnectionRegistry::new());
         let load = Arc::new(BackendLoad::new());
@@ -404,6 +423,25 @@ mod tests {
         assert_eq!(load.active_connections_for_address(&a), 1);
         drop(guard);
         assert_eq!(load.active_connections_for_address(&a), 0);
+    }
+
+    #[test]
+    fn resolved_backend_peer_does_not_change_configured_load_accounting_address() {
+        let load = Arc::new(BackendLoad::new());
+        let configured = addr("backend.internal");
+        let resolved_peer = "10.4.5.6:25565".parse().expect("resolved TCP peer");
+        let player = session(1, Uuid::new_v4(), "alice", "lobby", &load);
+
+        player.set_connected_address(Some(configured.clone()));
+        player.set_backend_remote_addr(Some(resolved_peer));
+
+        assert_eq!(player.connected_address(), Some(configured.clone()));
+        assert_eq!(player.backend_remote_addr(), Some(resolved_peer));
+        assert_eq!(load.active_connections_for_address(&configured), 1);
+
+        player.set_backend_remote_addr(None);
+        assert_eq!(player.connected_address(), Some(configured.clone()));
+        assert_eq!(load.active_connections_for_address(&configured), 1);
     }
 
     #[test]

@@ -9,8 +9,8 @@ use crate::error::{ConfigError, ProxyValidationError, ServerValidationError, Was
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
 use crate::types::{
-    BalanceStrategy, ForwardingConfig, ForwardingMode, PluginWasmConfig, WasmCodecQuarantineConfig,
-    WasmLimits, WasmQuotasConfig, WasmRecoveryConfig,
+    BalanceStrategy, DockerMode, ForwardingConfig, ForwardingMode, PluginWasmConfig,
+    WasmCodecQuarantineConfig, WasmLimits, WasmQuotasConfig, WasmRecoveryConfig,
 };
 
 /// Non-fatal findings of a validation that passed.
@@ -249,7 +249,11 @@ pub fn validate_server_configs(configs: &[ServerConfig]) -> Result<(), ConfigErr
 }
 
 pub fn validate_proxy_config(config: &ProxyConfig) -> Result<Vec<String>, ConfigError> {
-    if !config.servers_dir.is_dir() {
+    let swarm_discovery = config
+        .docker
+        .as_ref()
+        .is_some_and(|docker| docker.mode == DockerMode::Swarm);
+    if !swarm_discovery && !config.servers_dir.is_dir() {
         return Err(ConfigError::DirectoryNotFound(config.servers_dir.clone()));
     }
 
@@ -333,6 +337,18 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, Conf
         && docker.poll_interval.is_zero()
     {
         return Err(zero_duration("docker.poll_interval"));
+    }
+
+    if let Some(docker) = &config.docker
+        && docker.mode == DockerMode::Swarm
+        && docker
+            .network
+            .as_deref()
+            .is_none_or(|n| n.trim().is_empty())
+    {
+        return Err(ConfigError::Proxy(
+            ProxyValidationError::DockerSwarmNetworkRequired,
+        ));
     }
 
     if let Some(web) = &config.web {

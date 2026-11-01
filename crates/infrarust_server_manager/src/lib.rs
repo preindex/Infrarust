@@ -7,6 +7,7 @@
 //! for custom panel integrations.
 
 pub mod crafty;
+pub mod docker;
 pub mod error;
 mod http;
 pub mod local;
@@ -17,9 +18,10 @@ pub mod service;
 pub mod state;
 
 pub use crafty::CraftyProvider;
+pub use docker::SwarmServerProvider;
 pub use error::ServerManagerError;
 pub use local::LocalProvider;
 pub use provider::{ProviderStatus, ServerProvider};
 pub use pterodactyl::PterodactylProvider;
-pub use service::{PlayerCounter, ServerManagerService};
+pub use service::{DemandLease, LifecyclePolicy, PlayerCounter, ServerManagerService};
 pub use state::ServerState;

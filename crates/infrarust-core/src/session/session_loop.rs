@@ -53,6 +53,7 @@ pub(crate) async fn run_session_loop(
         match mode {
             ConnectionMode::Backend(ref mut backend) => {
                 session.set_connected_address(backend.server_address().cloned());
+                session.set_backend_remote_addr(backend.remote_addr());
                 pending.approved = None;
                 let outcome =
                     proxy_loop(ctx, io, backend, &current_server_id, &mut pending.join).await;
@@ -177,6 +178,7 @@ pub(crate) async fn run_session_loop(
             }
             ConnectionMode::Kicked(ref kick) => {
                 session.set_connected_address(None);
+                session.set_backend_remote_addr(None);
                 pending.join = None;
                 match settle(ctx, io, &current_server_id, kick.clone(), false).await {
                     Settled::Backend(backend, server) => {
@@ -197,6 +199,7 @@ pub(crate) async fn run_session_loop(
             }
             ConnectionMode::Limbo(ref handlers, ref entry_ctx) => {
                 session.set_connected_address(None);
+                session.set_backend_remote_addr(None);
                 pending.join = None;
                 if let Err(e) = enter_play(ctx, io, &current_server_id).await {
                     tracing::warn!("could not bring the client into play for limbo: {e}");

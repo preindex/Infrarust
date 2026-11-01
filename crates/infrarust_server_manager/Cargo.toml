@@ -19,6 +19,7 @@ workspace = true
 
 [dependencies]
 infrarust_config = { workspace = true }
+bollard = { workspace = true }
 tokio = { workspace = true, features = ["process"] }
 reqwest = { workspace = true }
 dashmap = { workspace = true }

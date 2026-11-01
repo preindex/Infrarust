@@ -1,0 +1,52 @@
+name: Floodgate staging image
+
+on:
+  push:
+    branches:
+      - codex/floodgate-compat
+    paths:
+      - Dockerfile
+      - Dockerfile.combined-entrypoint.sh
+      - .dockerignore
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - plugins/**
+      - tools/**
+      - .github/workflows/floodgate-staging-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set lowercase image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish combined Infrarust + Geyser staging image
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.name }}:floodgate-staging
+          build-args: |
+            RUST_VERSION=1.99.0
+            ALPINE_VERSION=3.24
