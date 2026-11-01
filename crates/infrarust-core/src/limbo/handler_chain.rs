@@ -91,7 +91,24 @@ pub(crate) async fn run_handler_chain(
 
         match process_handler_result(result) {
             HandlerAction::Continue => continue,
-            HandlerAction::Exit(chain_result) => return chain_result,
+            HandlerAction::Exit(chain_result) => {
+                if needs_join_game
+                    && !spawn_sent
+                    && matches!(
+                        &chain_result,
+                        LimboChainResult::Switch(_) | LimboChainResult::SendToLimbo(_)
+                    )
+                {
+                    if let Err(e) =
+                        send_spawn_sequence(&mut io.client, ctx.version(), ctx.registry(), true)
+                            .await
+                    {
+                        tracing::warn!(error = %e, "failed to send limbo spawn sequence");
+                        return LimboChainResult::Kick(Component::text("Internal error"));
+                    }
+                }
+                return chain_result;
+            }
             HandlerAction::Hold(timeout) => {
                 if !spawn_sent {
                     if let Err(e) = send_spawn_sequence(
@@ -114,6 +131,15 @@ pub(crate) async fn run_handler_chain(
                 }
             }
         }
+    }
+
+    if needs_join_game
+        && !spawn_sent
+        && let Err(e) =
+            send_spawn_sequence(&mut io.client, ctx.version(), ctx.registry(), true).await
+    {
+        tracing::warn!(error = %e, "failed to send limbo spawn sequence");
+        return LimboChainResult::Kick(Component::text("Internal error"));
     }
 
     LimboChainResult::Completed
