@@ -2,6 +2,8 @@
 defineProps<{
   columns: Array<{ key: string; label: string }>;
   rows: T[];
+  emptyText?: string;
+  showActions?: boolean;
 }>();
 </script>
 
@@ -20,6 +22,7 @@ defineProps<{
             {{ column.label }}
           </th>
           <th
+            v-if="showActions !== false"
             class="sticky top-0 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.09em] text-[var(--ir-text-muted)]"
             style="background: var(--ir-glass-bg-strong);"
           >
@@ -38,13 +41,13 @@ defineProps<{
               {{ row[column.key] }}
             </slot>
           </td>
-          <td class="px-4 py-2.5">
+          <td v-if="showActions !== false" class="px-4 py-2.5">
             <slot name="actions" :row="row" />
           </td>
         </tr>
         <tr v-if="rows.length === 0">
-          <td :colspan="columns.length + 1" class="px-4 py-10 text-center text-sm text-[var(--ir-text-muted)]">
-            No data available.
+          <td :colspan="columns.length + (showActions !== false ? 1 : 0)" class="px-4 py-10 text-center text-sm text-[var(--ir-text-muted)]">
+            {{ emptyText ?? 'No data available.' }}
           </td>
         </tr>
       </tbody>
@@ -54,7 +57,7 @@ defineProps<{
   <!-- Mobile card list -->
   <div class="flex flex-col gap-3 lg:hidden">
     <div v-if="rows.length === 0" class="glass-pane p-6 text-center text-sm text-[var(--ir-text-muted)]">
-      No data available.
+      {{ emptyText ?? 'No data available.' }}
     </div>
     <div
       v-for="(row, index) in rows"
@@ -71,7 +74,7 @@ defineProps<{
           </span>
         </div>
       </div>
-      <div class="mt-3 flex items-center gap-2 border-t border-[var(--ir-border)] pt-3">
+      <div v-if="showActions !== false" class="mt-3 flex items-center gap-2 border-t border-[var(--ir-border)] pt-3">
         <slot name="actions" :row="row" />
       </div>
     </div>

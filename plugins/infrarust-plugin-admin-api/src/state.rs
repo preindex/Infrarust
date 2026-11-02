@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -47,6 +48,10 @@ pub struct ApiState {
     pub recent_events: Arc<Mutex<VecDeque<RecentEvent>>>,
     /// Persisted drain intent, replayed after a restart.
     pub drain_store: Arc<DrainStore>,
+    /// Root of the proxy's plugin data directories.
+    pub plugin_data_root: PathBuf,
+    /// Serializes read-modify-write updates to plugin configuration documents.
+    pub plugin_config_write: tokio::sync::Mutex<()>,
 }
 
 /// A summarized event for the activity feed.

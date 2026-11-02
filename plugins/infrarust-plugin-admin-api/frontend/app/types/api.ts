@@ -287,6 +287,46 @@ export interface PluginDto {
   state: string;
   dependencies: Array<{ id: string; optional: boolean }>;
   runtime: PluginRuntimeDto | null;
+  admin_page?: PluginAdminPageDto | null;
+}
+
+export interface PluginAdminPageDto {
+  version: number;
+  slug: string;
+  title: string;
+  description: string | null;
+  fields: PluginAdminFieldDto[];
+  components: PluginAdminComponentDto[];
+  actions: PluginAdminActionDto[];
+}
+
+export type PluginAdminComponentDto =
+  | { kind: 'stack'; children: PluginAdminComponentDto[] }
+  | { kind: 'grid'; columns: number; children: PluginAdminComponentDto[] }
+  | { kind: 'card'; title: string; children: PluginAdminComponentDto[] }
+  | { kind: 'text'; content: string }
+  | { kind: 'callout'; content: string; tone: 'neutral' | 'good' | 'warn' | 'bad' | 'info' }
+  | { kind: 'metric'; label: string; value_path: string; note: string | null }
+  | { kind: 'table'; data_path: string; columns: Array<{ key: string; label: string }>; empty_text: string | null; row_action: string | null }
+  | { kind: 'button'; label: string; action: string; destructive: boolean };
+
+export interface PluginAdminActionDto {
+  id: string;
+  label: string;
+  confirmation: string | null;
+  destructive: boolean;
+}
+
+export interface PluginAdminFieldDto {
+  key: string;
+  label: string;
+  description: string | null;
+  kind: 'integer' | 'uuid_list';
+  minimum: number | null;
+  maximum: number | null;
+  default_integer: number | null;
+  default_strings: string[];
+  max_items: number | null;
 }
 
 // ── Activity ──

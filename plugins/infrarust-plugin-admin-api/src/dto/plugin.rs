@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use infrarust_api::plugin::{PluginFault, PluginRuntimeStatus};
+use infrarust_api::plugin::{
+    PluginAdminAction, PluginAdminColumn, PluginAdminComponent, PluginAdminField,
+    PluginAdminFieldKind, PluginAdminPage, PluginAdminTone, PluginFault, PluginRuntimeStatus,
+};
 use infrarust_api::services::plugin_registry::PluginInfo;
 use serde::Serialize;
 
@@ -14,6 +17,8 @@ pub struct PluginResponse {
     pub state: String,
     pub dependencies: Vec<PluginDependencyResponse>,
     pub runtime: Option<PluginRuntimeResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub admin_page: Option<PluginAdminPageResponse>,
 }
 
 impl PluginResponse {
@@ -21,6 +26,7 @@ impl PluginResponse {
         let state = info.state.as_str().to_string();
         let runtime = info.runtime.map(PluginRuntimeResponse::from_status);
         let meta = info.metadata;
+        let admin_page = meta.admin_page.map(PluginAdminPageResponse::from_page);
         Self {
             id: meta.id,
             name: meta.name,
@@ -37,6 +43,207 @@ impl PluginResponse {
                 })
                 .collect(),
             runtime,
+            admin_page,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PluginAdminPageResponse {
+    pub version: u16,
+    pub slug: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub fields: Vec<PluginAdminFieldResponse>,
+    pub components: Vec<PluginAdminComponentResponse>,
+    pub actions: Vec<PluginAdminActionResponse>,
+}
+
+impl PluginAdminPageResponse {
+    fn from_page(page: PluginAdminPage) -> Self {
+        Self {
+            version: page.version,
+            slug: page.slug,
+            title: page.title,
+            description: page.description,
+            fields: page
+                .fields
+                .into_iter()
+                .map(PluginAdminFieldResponse::from_field)
+                .collect(),
+            components: page
+                .components
+                .into_iter()
+                .map(PluginAdminComponentResponse::from)
+                .collect(),
+            actions: page
+                .actions
+                .into_iter()
+                .map(PluginAdminActionResponse::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PluginAdminComponentResponse {
+    Stack {
+        children: Vec<Self>,
+    },
+    Grid {
+        columns: u8,
+        children: Vec<Self>,
+    },
+    Card {
+        title: String,
+        children: Vec<Self>,
+    },
+    Text {
+        content: String,
+    },
+    Callout {
+        content: String,
+        tone: &'static str,
+    },
+    Metric {
+        label: String,
+        value_path: String,
+        note: Option<String>,
+    },
+    Table {
+        data_path: String,
+        columns: Vec<PluginAdminColumnResponse>,
+        empty_text: Option<String>,
+        row_action: Option<String>,
+    },
+    Button {
+        label: String,
+        action: String,
+        destructive: bool,
+    },
+}
+
+impl From<PluginAdminComponent> for PluginAdminComponentResponse {
+    fn from(component: PluginAdminComponent) -> Self {
+        match component {
+            PluginAdminComponent::Stack { children } => Self::Stack {
+                children: children.into_iter().map(Self::from).collect(),
+            },
+            PluginAdminComponent::Grid { columns, children } => Self::Grid {
+                columns,
+                children: children.into_iter().map(Self::from).collect(),
+            },
+            PluginAdminComponent::Card { title, children } => Self::Card {
+                title,
+                children: children.into_iter().map(Self::from).collect(),
+            },
+            PluginAdminComponent::Text { content } => Self::Text { content },
+            PluginAdminComponent::Callout { content, tone } => Self::Callout {
+                content,
+                tone: match tone {
+                    PluginAdminTone::Neutral => "neutral",
+                    PluginAdminTone::Good => "good",
+                    PluginAdminTone::Warn => "warn",
+                    PluginAdminTone::Bad => "bad",
+                    PluginAdminTone::Info => "info",
+                },
+            },
+            PluginAdminComponent::Metric {
+                label,
+                value_path,
+                note,
+            } => Self::Metric {
+                label,
+                value_path,
+                note,
+            },
+            PluginAdminComponent::Table {
+                data_path,
+                columns,
+                empty_text,
+                row_action,
+            } => Self::Table {
+                data_path,
+                columns: columns.into_iter().map(Into::into).collect(),
+                empty_text,
+                row_action,
+            },
+            PluginAdminComponent::Button {
+                label,
+                action,
+                destructive,
+            } => Self::Button {
+                label,
+                action,
+                destructive,
+            },
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PluginAdminColumnResponse {
+    pub key: String,
+    pub label: String,
+}
+
+impl From<PluginAdminColumn> for PluginAdminColumnResponse {
+    fn from(column: PluginAdminColumn) -> Self {
+        Self {
+            key: column.key,
+            label: column.label,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PluginAdminActionResponse {
+    pub id: String,
+    pub label: String,
+    pub confirmation: Option<String>,
+    pub destructive: bool,
+}
+
+impl From<PluginAdminAction> for PluginAdminActionResponse {
+    fn from(action: PluginAdminAction) -> Self {
+        Self {
+            id: action.id,
+            label: action.label,
+            confirmation: action.confirmation,
+            destructive: action.destructive,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PluginAdminFieldResponse {
+    pub key: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub kind: &'static str,
+    pub minimum: Option<u64>,
+    pub maximum: Option<u64>,
+    pub default_integer: Option<u64>,
+    pub default_strings: Vec<String>,
+    pub max_items: Option<usize>,
+}
+
+impl PluginAdminFieldResponse {
+    fn from_field(field: PluginAdminField) -> Self {
+        Self {
+            key: field.key,
+            label: field.label,
+            description: field.description,
+            kind: match field.kind {
+                PluginAdminFieldKind::Integer => "integer",
+                PluginAdminFieldKind::UuidList => "uuid_list",
+            },
+            minimum: field.minimum,
+            maximum: field.maximum,
+            default_integer: field.default_integer,
+            default_strings: field.default_strings,
+            max_items: field.max_items,
         }
     }
 }

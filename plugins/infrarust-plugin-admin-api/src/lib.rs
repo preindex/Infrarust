@@ -249,6 +249,11 @@ impl Plugin for AdminApiPlugin {
                 health_checker: Arc::new(HealthChecker::new()),
                 recent_events: Arc::new(Mutex::new(VecDeque::new())),
                 drain_store,
+                plugin_data_root: data_dir
+                    .parent()
+                    .unwrap_or(data_dir.as_path())
+                    .to_path_buf(),
+                plugin_config_write: tokio::sync::Mutex::new(()),
             });
 
             self.spawn_event_bridge(ctx, &state);

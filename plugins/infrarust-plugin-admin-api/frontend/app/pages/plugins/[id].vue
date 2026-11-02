@@ -85,6 +85,20 @@ const faultAge = computed(() => {
       </div>
     </div>
 
+    <NuxtLink
+      v-if="plugin?.admin_page"
+      :to="`/plugins/${encodeURIComponent(plugin.id)}/${encodeURIComponent(plugin.admin_page.slug)}`"
+      class="glass-pane glass-pane-interactive flex items-center justify-between gap-4 p-5"
+    >
+      <div>
+        <h3 class="font-semibold">{{ plugin.admin_page.title }}</h3>
+        <p v-if="plugin.admin_page.description" class="mt-1 text-sm text-[var(--ir-text-muted)]">
+          {{ plugin.admin_page.description }}
+        </p>
+      </div>
+      <span class="shrink-0 text-sm text-[var(--ir-accent)]">Manage →</span>
+    </NuxtLink>
+
     <div v-if="runtime" class="glass-pane p-5">
       <div class="mb-3 flex items-center gap-2">
         <CpuChipIcon class="h-4 w-4 text-[var(--ir-accent)]" />

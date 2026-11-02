@@ -74,6 +74,18 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         .route("/api/v1/health/backends", get(handlers::backends::list_all))
         .route("/api/v1/plugins", get(handlers::plugins::list))
         .route("/api/v1/plugins/{id}", get(handlers::plugins::get))
+        .route(
+            "/api/v1/plugins/{id}/admin/config",
+            get(handlers::plugins::get_admin_config).put(handlers::plugins::update_admin_config),
+        )
+        .route(
+            "/api/v1/plugins/{id}/admin/data",
+            get(handlers::plugins::get_admin_data),
+        )
+        .route(
+            "/api/v1/plugins/{id}/admin/actions/{action}",
+            post(handlers::plugins::run_admin_action),
+        )
         .route("/api/v1/stats", get(handlers::stats::overview))
         .route("/api/v1/events/recent", get(handlers::events::recent))
         .route(

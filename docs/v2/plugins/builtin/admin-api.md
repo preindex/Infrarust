@@ -287,8 +287,35 @@ The ban endpoints go through whichever [ban provider](../../configuration/securi
 |--------|------|-------------|
 | GET | `/api/v1/plugins` | List the enabled plugins |
 | GET | `/api/v1/plugins/{id}` | Get one enabled plugin's info |
+| GET | `/api/v1/plugins/{id}/admin/config` | Read fields declared by a plugin's versioned admin-page contribution |
+| PUT | `/api/v1/plugins/{id}/admin/config` | Update declared fields; returns `requires_restart: true` |
+| GET | `/api/v1/plugins/{id}/admin/data` | Fetch live data for the plugin's admin dashboard |
+| POST | `/api/v1/plugins/{id}/admin/actions/{action}` | Invoke a declared plugin admin operation |
 
-Each plugin carries its metadata, its lifecycle `state`, and a `runtime` object, which is `null` for a native plugin and filled for a WASM plugin. The runtime is read when the request is answered:
+Each plugin carries its metadata, its lifecycle `state`, and a `runtime` object, which is `null` for a native plugin and filled for a WASM plugin. Native plugins may optionally declare a versioned admin dashboard. The plugin composes host-rendered cards, grids, metrics, callouts, tables, buttons, and bounded config fields, and provides live data and named action handlers through the plugin API. The dashboard uses the same components and visual style as the built-in pages; plugins do not supply executable scripts or markup. WASM metadata does not yet expose this contribution. Plugins without a contribution retain the generic detail page. For example:
+
+```rust
+PluginMetadata::new("example", "Example", env!("CARGO_PKG_VERSION"))
+    .admin_page(PluginAdminPage::new(1, "manager", "Example manager")
+        .action(PluginAdminAction::new("refresh", "Refresh data"))
+        .component(PluginAdminComponent::Grid { columns: 2, children: vec![
+            PluginAdminComponent::Card { title: "Overview".into(), children: vec![
+                PluginAdminComponent::Metric {
+                    label: "Connected".into(), value_path: "connected".into(), note: None,
+                },
+            ]},
+            PluginAdminComponent::Card { title: "Operations".into(), children: vec![
+                PluginAdminComponent::Button {
+                    label: "Refresh".into(), action: "refresh".into(), destructive: false,
+                },
+            ]},
+        ]}))
+
+// Implement Plugin::admin_data to return values addressed by the component
+// data paths, and Plugin::admin_action to handle the declared operation.
+```
+
+The runtime is read when the request is answered:
 
 ```json
 {
@@ -480,6 +507,8 @@ Streams log entries in real time. Filter by minimum `level` (`trace`, `debug`, `
 When `enable_webui` is `true`, the plugin serves an embedded web frontend at the root URL (`http://127.0.0.1:8080/`). The frontend is a Nuxt SPA bundled into the binary at compile time.
 
 The Plugins page shows each plugin's state; it has no enable or disable action, since a plugin is turned on or off with `enabled` in its `[plugins.<id>]` table and a restart. A WASM plugin that is recovering or quarantined gets a second badge with its health, and the time until the next attempt when one is scheduled. A WASM plugin's page adds a Runtime panel with its health, generation, restarts in the window, queue depth and queue wait, and the cause and age of its last fault. Native plugins have no Runtime panel. Both pages fetch the plugins again every 10 seconds, on every second `stats.tick` event of the event stream, and count down to the next attempt in between.
+
+Plugins with an admin-page contribution link to a nested page under `/plugins/{id}/{slug}`. Config operations are authenticated, validate contribution fields and values, and are limited to the owning plugin's `config.toml` under `<plugins_dir>/<id>/`; writes report that a restart is required. Live data and named actions are also authenticated, and action IDs must be declared by the page. The host bounds dashboard tree depth, component count, columns, and response size.
 
 Non-API routes serve static files from the embedded bundle. If a requested file doesn't exist, the server returns `index.html` for client-side routing. API routes (`/api/*`) that don't match a defined endpoint return 404.
 
