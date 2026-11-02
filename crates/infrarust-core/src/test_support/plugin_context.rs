@@ -11,6 +11,7 @@ use infrarust_api::permissions::{
 };
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::provider::PluginConfigProvider;
+use infrarust_api::services::admission_guard::AdmissionGuard;
 use infrarust_api::services::ban_service::{BanProvider, BanService};
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::load_balancer::LoadBalancerService;
@@ -64,6 +65,12 @@ impl PluginContext for MockPluginContext {
     fn register_ban_provider(
         &self,
         _provider: Arc<dyn BanProvider>,
+    ) -> Result<(), ProviderRejected> {
+        unimplemented!("mock")
+    }
+    fn register_admission_guard(
+        &self,
+        _guard: Arc<dyn AdmissionGuard>,
     ) -> Result<(), ProviderRejected> {
         unimplemented!("mock")
     }

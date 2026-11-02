@@ -135,3 +135,17 @@ Deciding whether a player holds a permission node is a different job, done by a 
 | `withdraw()` | `ServiceHandle` | `bool`, `false` if it was already gone |
 | `service()` | `ServiceHandle` | The type name |
 | `services()` | `PluginContext` | `Arc<dyn ServiceRegistry>` |
+
+## Live Log Stream
+
+Native plugins that hold the `log-read` capability can subscribe to the proxy's log events with `PluginContext::log_service()`. The method returns `None` unless the operator grants the capability under the plugin's `permissions` list.
+
+```rust
+let Some(logs) = ctx.log_service() else { return Ok(()) };
+let mut sub = logs.subscribe(LogFilter::new(LogLevel::Warn).prefix("infrarust_core"))?;
+while let Some(record) = sub.recv().await {
+    // record.level, record.target, record.timestamp, record.message
+}
+```
+
+The stream is live only. It carries no history, and it sees only events that pass the operator's global log filter (`RUST_LOG` or `--log-level`). Each message is one line, at most 1024 bytes, with IPv4 addresses and common secret assignments redacted on a best-effort basis. Records dropped because a subscriber's queue was full are counted by `LogSubscription::dropped()`. A plugin that forwards records off the host is responsible for the data they contain, so keep the operator's opt-in visible in its config.

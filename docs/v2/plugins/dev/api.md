@@ -88,6 +88,7 @@ The `PluginContext` trait provides access to every service and registration meth
 | `register_config_provider(provider)` | `()` | Register a dynamic config provider |
 | `register_ban_provider(provider)` | `Result<(), ProviderRejected>` | Become the ban provider. Needs `ban-provider` and `[ban] provider` naming this plugin, see [Bans](./bans) |
 | `register_permission_provider(provider)` | `Result<(), ProviderRejected>` | Become the permission provider. Needs `permission-provider` and `[permissions] provider` naming this plugin, see [Permissions](./permissions) |
+| `register_admission_guard(guard)` | `Result<(), ProviderRejected>` | Register an admission check in this plugin's own namespace. Needs the `admission-guard` capability. |
 | `register_permission_node(node)` | `Result<(), PermissionNodeError>` | Register a node this plugin checks, with its default. Removed when the plugin is disabled |
 | `permission_node(name)` | `Option<PermissionNodeInfo>` | One registered node, looked up like `has_permission` does: trimmed and lowercased |
 | `permission_nodes()` | `Vec<PermissionNodeInfo>` | Every registered node and the plugin that owns it |
@@ -100,6 +101,8 @@ The `PluginContext` trait provides access to every service and registration meth
 | `server_messenger()` | `Arc<dyn ServerMessenger>` | Send a plugin message to a backend server through a player on it. See [Plugin messaging](./messaging#messages-to-a-server) |
 
 `codec_filters()` and `transport_filters()` return `None` unless the plugin holds the matching capability. Compiled-in plugins are trusted and hold every capability except the ones in their `[plugins.<id>] deny`, so they get both unless denied. The transport filter capability cannot be granted through `permissions`, so it stays reserved for trusted native plugins.
+
+An admission guard receives the final destination, its opaque JSON policy, identity verification state, and the connection stage. It must return `Allow` to admit, `Deny` to refuse, or `Hold { handler }` to pause in one of its own registered limbo handlers. After a hold completes, core re-runs every configured guard against the current destination and policy. Missing providers, errors, timeouts, panics, and stale registrations fail closed. Configure required namespaces with `admission_guards` and their plugin-owned values with `admission_policies` in a server config.
 
 A filter belongs to the plugin that registered it. `register` and `unregister` return `Result<(), FilterRegistryError>`: registering an id that another plugin or the proxy owns fails with `FilterRegistryError::OwnedBy { id, owner }`, and registering one of your own ids again replaces it. `unregister` removes only a filter you own, and answers `OwnedBy` for someone else's id and `NotFound` for an id nobody registered. Filters the proxy registers itself are owned by `PROXY_FILTER_OWNER` (`"infrarust"`), which no plugin can take over. Every filter a plugin owns is removed when it is disabled, so connections opened afterwards no longer run its code.
 

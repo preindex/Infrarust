@@ -52,6 +52,8 @@ pub enum HandoffError {
     UnknownServer(ServerId),
     #[error("server `{0}` has no backend address")]
     NoAddress(String),
+    #[error("a handoff cannot use a stale route or bypass an admission guard")]
+    AdmissionGuard,
     #[error("replaying the opening needs the parsed handshake")]
     MissingHandshake,
     #[error("could not rebuild the handshake for the handoff target: {0}")]
@@ -121,6 +123,9 @@ impl HandoffRelay {
         } else {
             Vec::new()
         };
+        // Resolve/replay may have taken time or observed a route update. Check
+        // the live source and target snapshots immediately before connect.
+        self.confirm_routes(&ctx, &resolved)?;
         let backend = tokio::select! {
             biased;
             () = shutdown.cancelled() => return Err(HandoffError::Shutdown),
@@ -197,7 +202,7 @@ impl HandoffRelay {
         handoff: &Handoff,
     ) -> Result<Resolved, HandoffError> {
         let explicit = handoff.proxy_protocol;
-        match &handoff.target {
+        let resolved = match &handoff.target {
             HandoffTarget::Route => {
                 let routing = ctx
                     .extensions
@@ -237,7 +242,73 @@ impl HandoffRelay {
                 ticket: None,
             }),
             _ => Err(HandoffError::NoRoute),
+        }?;
+
+        // Handoffs connect outside the normal authenticated session path. Do
+        // not let a plugin bypass a protected source or target server.
+        let source_is_gated = ctx.extensions.get::<RoutingData>().is_some_and(|routing| {
+            !routing
+                .server_config
+                .configured_admission_guards()
+                .is_empty()
+        });
+        let target_is_gated = resolved
+            .server
+            .as_ref()
+            .is_some_and(|server| !server.configured_admission_guards().is_empty());
+        if source_is_gated || target_is_gated {
+            return Err(HandoffError::AdmissionGuard);
         }
+        Ok(resolved)
+    }
+
+    fn confirm_routes(
+        &self,
+        ctx: &ConnectionContext,
+        resolved: &Resolved,
+    ) -> Result<(), HandoffError> {
+        if let Some(source) = ctx.extensions.get::<RoutingData>() {
+            let Some(current) = self
+                .services
+                .domain_router
+                .find_by_server_id(&source.config_id)
+            else {
+                return Err(HandoffError::AdmissionGuard);
+            };
+            if !Arc::ptr_eq(&current, &source.server_config)
+                || !current.configured_admission_guards().is_empty()
+            {
+                return Err(HandoffError::AdmissionGuard);
+            }
+        }
+
+        if let Some(target) = &resolved.server {
+            let Some(current) = self
+                .services
+                .domain_router
+                .find_by_server_id(&target.effective_id())
+            else {
+                return Err(HandoffError::AdmissionGuard);
+            };
+            if !Arc::ptr_eq(&current, target) || !current.configured_admission_guards().is_empty() {
+                return Err(HandoffError::AdmissionGuard);
+            }
+        }
+
+        // Address targets have no server policy identity, so there is no way
+        // to prove they are not an alias for a protected backend. When any
+        // A guarded route exists, only classified server targets are allowed.
+        let has_unclassified_target = resolved.server.is_none()
+            && self
+                .services
+                .domain_router
+                .list_all()
+                .iter()
+                .any(|(_, config)| !config.configured_admission_guards().is_empty());
+        if has_unclassified_target {
+            return Err(HandoffError::AdmissionGuard);
+        }
+        Ok(())
     }
 
     fn route_of(&self, server: &ServerId) -> Result<RoutingData, HandoffError> {

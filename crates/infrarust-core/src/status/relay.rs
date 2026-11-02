@@ -388,6 +388,10 @@ mod tests {
             ip_filter: None,
             disconnect_message: None,
             limbo_handlers: vec![],
+            admission_policies: Default::default(),
+            admission_guards: vec![],
+            discord_communities: vec![],
+            whitelist_through_discord: false,
             bungeecord_channel: false,
         }
     }

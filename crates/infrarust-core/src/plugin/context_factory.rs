@@ -9,8 +9,10 @@ pub use infrarust_api::loader::PluginContextFactory;
 use super::context::{HostRegistries, PluginContextImpl};
 use super::manager::PluginServices;
 use super::service_registry::ServiceRegistryImpl;
+use crate::admission::AdmissionService;
 use crate::ban::BanManager;
 use crate::limbo::registry::LimboHandlerRegistry;
+use crate::log_stream::LogStream;
 use crate::permissions::PermissionService;
 use crate::plugin_messaging::PluginChannels;
 use crate::util::sync::lock;
@@ -29,9 +31,11 @@ pub struct PluginContextFactoryImpl {
     plugin_configs: HashMap<String, PluginPermissions>,
     contexts: Mutex<HashMap<String, Weak<PluginContextImpl>>>,
     ban_manager: Option<Arc<BanManager>>,
+    admission_service: Arc<AdmissionService>,
     permissions: Arc<PermissionService>,
     limbo_handlers: Arc<LimboHandlerRegistry>,
     service_registry: Arc<ServiceRegistryImpl>,
+    log_stream: Option<Arc<LogStream>>,
     messaging: Option<(
         Arc<crate::plugin_messaging::PluginMessaging>,
         Arc<crate::session::connection_registry::ConnectionRegistry>,
@@ -51,11 +55,20 @@ impl PluginContextFactoryImpl {
             plugin_configs,
             contexts: Mutex::new(HashMap::new()),
             ban_manager: None,
+            admission_service: Arc::new(AdmissionService::default()),
             permissions: Arc::new(PermissionService::new_sync(&Default::default())),
             limbo_handlers: Arc::new(LimboHandlerRegistry::new()),
             service_registry,
+            log_stream: None,
             messaging: None,
         }
+    }
+
+    /// Makes the proxy's live log stream available to plugins holding `LogRead`.
+    #[must_use]
+    pub fn with_log_stream(mut self, stream: Option<Arc<LogStream>>) -> Self {
+        self.log_stream = stream;
+        self
     }
 
     #[must_use]
@@ -84,6 +97,13 @@ impl PluginContextFactoryImpl {
         self
     }
 
+    /// Shares the proxy admission service so registrations reach session paths.
+    #[must_use]
+    pub fn with_admission_service(mut self, service: Arc<AdmissionService>) -> Self {
+        self.admission_service = service;
+        self
+    }
+
     #[must_use]
     pub fn with_permissions(mut self, permissions: Arc<PermissionService>) -> Self {
         self.permissions = permissions;
@@ -99,10 +119,12 @@ impl PluginContextFactoryImpl {
         };
         HostRegistries {
             ban_manager: self.ban_manager.clone(),
+            admission_service: Arc::clone(&self.admission_service),
             permissions: Arc::clone(&self.permissions),
             limbo_handlers: Arc::clone(&self.limbo_handlers),
             services: Arc::clone(&self.service_registry),
             channels,
+            log_stream: self.log_stream.clone(),
         }
     }
 
@@ -119,9 +141,7 @@ impl PluginContextFactoryImpl {
             .unwrap_or_default();
 
         let (capabilities, rejected) = if perms.trusted {
-            let mut set = CapabilitySet::native_trusted();
-            let unknown = set.revoke_config_strings(&perms.deny);
-            (set, unknown)
+            CapabilitySet::from_native_config(&perms.permissions, &perms.deny)
         } else {
             CapabilitySet::from_config(&perms.permissions, &perms.deny)
         };

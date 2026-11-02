@@ -112,7 +112,14 @@ pub(crate) async fn run_session_loop(
                             server: target.clone(),
                             cause,
                         };
-                        let action = switch(ctx, io, &current_server_id, request).await;
+                        let action = switch(
+                            ctx,
+                            io,
+                            &current_server_id,
+                            request,
+                            infrarust_api::services::AdmissionStage::ServerSwitch,
+                        )
+                        .await;
                         session.settle_connect(&target, &connection_result(ctx, &action));
                         let settled = match action {
                             SwitchAction::Backend(backend, server) => {
@@ -234,13 +241,17 @@ pub(crate) async fn run_session_loop(
                     .fire(LimboExitEvent::new(player, reason, next_server))
                     .await;
 
-                let gate_target = match entry_ctx {
-                    LimboEntryContext::InitialConnection { target_server } => {
-                        Some(target_server.clone())
+                let (limbo_target, gate_target, from_initial) = match &entry_ctx {
+                    LimboEntryContext::InitialConnection { target_server } => (
+                        Some(target_server.clone()),
+                        Some(target_server.clone()),
+                        true,
+                    ),
+                    LimboEntryContext::AdmissionGuard { target_server, .. } => {
+                        (Some(target_server.clone()), None, false)
                     }
-                    _ => None,
+                    _ => (None, None, false),
                 };
-                let from_initial = gate_target.is_some();
 
                 match exit {
                     LimboExitResult::Completed | LimboExitResult::SwitchedTo(_)
@@ -251,11 +262,18 @@ pub(crate) async fn run_session_loop(
                     LimboExitResult::Completed | LimboExitResult::SwitchedTo(_) => {
                         let target = match exit {
                             LimboExitResult::SwitchedTo(ref s) => s.clone(),
-                            _ => current_server_id.clone(),
+                            _ => limbo_target.unwrap_or_else(|| current_server_id.clone()),
                         };
                         let requested = target.clone();
                         let target = pending.release(target, gate_target.as_ref());
-                        let action = switch(ctx, io, &current_server_id, target).await;
+                        let admission_stage =
+                            if matches!(&entry_ctx, LimboEntryContext::AdmissionGuard { .. }) {
+                                infrarust_api::services::AdmissionStage::AfterHold
+                            } else {
+                                infrarust_api::services::AdmissionStage::ServerSwitch
+                            };
+                        let action =
+                            switch(ctx, io, &current_server_id, target, admission_stage).await;
                         session.settle_connect(&requested, &connection_result(ctx, &action));
                         match action {
                             SwitchAction::Backend(new_backend, new_server) => {
@@ -268,10 +286,12 @@ pub(crate) async fn run_session_loop(
                                 ));
                             }
                             SwitchAction::Limbo(handlers, limbo_ctx) => {
-                                if from_initial || handlers.is_empty() {
-                                    if from_initial {
+                                let admission_hold =
+                                    matches!(&limbo_ctx, LimboEntryContext::AdmissionGuard { .. });
+                                if (from_initial && !admission_hold) || handlers.is_empty() {
+                                    if from_initial && !admission_hold {
                                         tracing::warn!(
-                                            "skipping re-entry into limbo after initial connection gate"
+                                            "skipping limbo re-entry after initial connection, except for admission guard holds"
                                         );
                                     }
                                     break ProxyLoopOutcome::Error(CoreError::InvalidState(
@@ -434,8 +454,17 @@ async fn switch(
     io: &mut SessionIo,
     current_server: &ServerId,
     target: SwitchTarget,
+    admission_stage: infrarust_api::services::AdmissionStage,
 ) -> SwitchAction {
-    match crate::session::server_switch::perform_switch(ctx, io, current_server, target).await {
+    match crate::session::server_switch::perform_switch(
+        ctx,
+        io,
+        current_server,
+        target,
+        admission_stage,
+    )
+    .await
+    {
         Ok(SwitchResult::Backend(success)) => {
             SwitchAction::Backend(success.new_backend, success.new_server_id)
         }
@@ -491,7 +520,15 @@ async fn settle(
                     server: target,
                     cause: ConnectCause::KickRedirect,
                 };
-                match switch(ctx, io, current_server, request).await {
+                match switch(
+                    ctx,
+                    io,
+                    current_server,
+                    request,
+                    infrarust_api::services::AdmissionStage::ServerSwitch,
+                )
+                .await
+                {
                     SwitchAction::Backend(backend, server) => {
                         return Settled::Backend(backend, server);
                     }

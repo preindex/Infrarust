@@ -461,6 +461,11 @@ pub struct CapabilitySet {
 
 const _: () = assert!(Capability::ALL.len() <= u32::BITS as usize);
 
+/// Capabilities that trusted native plugins do not receive by default.
+///
+/// The operator grants each one explicitly in the plugin's `permissions` list.
+pub const NATIVE_OPT_IN: &[Capability] = &[Capability::LogRead];
+
 const fn bit(cap: Capability) -> u32 {
     1 << cap.index()
 }
@@ -522,11 +527,17 @@ impl CapabilitySet {
             .with(Capability::ConfigRead)
     }
 
+    /// Every capability a trusted native plugin holds by default.
+    ///
+    /// Opt-in capabilities listed in [`NATIVE_OPT_IN`] are left out and must be
+    /// granted explicitly through [`CapabilitySet::from_native_config`].
     #[must_use]
     pub fn native_trusted() -> Self {
         let mut set = Self::default();
         for &cap in Capability::ALL {
-            set.insert(cap);
+            if !NATIVE_OPT_IN.contains(&cap) {
+                set.insert(cap);
+            }
         }
         set
     }
@@ -543,9 +554,37 @@ impl CapabilitySet {
                         Capability::TransportFilter,
                     ));
                 }
+                Some(Capability::CommandDispatch) => {
+                    rejected.push(CapabilityRejection::NotGrantable(
+                        Capability::CommandDispatch,
+                    ));
+                }
+                // Native-only: WASM and other non-native plugins never receive it.
+                Some(Capability::LogRead) => {
+                    rejected.push(CapabilityRejection::NotGrantable(Capability::LogRead));
+                }
                 Some(cap) => set.insert(cap),
             }
         }
+        (set, rejected)
+    }
+
+    /// Builds the set for a trusted native plugin: [`CapabilitySet::native_trusted`]
+    /// plus the operator's `permissions` grants, minus its `deny` list.
+    #[must_use]
+    pub fn from_native_config(
+        grants: &[String],
+        denies: &[String],
+    ) -> (Self, Vec<CapabilityRejection>) {
+        let mut set = Self::native_trusted();
+        let mut rejected = Vec::new();
+        for s in grants {
+            match Capability::from_kebab(s) {
+                None => rejected.push(CapabilityRejection::Unknown(s.clone())),
+                Some(cap) => set.insert(cap),
+            }
+        }
+        rejected.extend(set.revoke_config_strings(denies));
         (set, rejected)
     }
 
@@ -780,7 +819,11 @@ mod tests {
     fn native_trusted_contains_every_capability() {
         let t = CapabilitySet::native_trusted();
         for &cap in Capability::ALL {
-            assert!(t.has(cap), "native_trusted missing {cap:?}");
+            if NATIVE_OPT_IN.contains(&cap) {
+                assert!(!t.has(cap), "native_trusted must not imply {cap:?}");
+            } else {
+                assert!(t.has(cap), "native_trusted missing {cap:?}");
+            }
         }
         assert!(t.has(Capability::TransportFilter));
     }

@@ -67,6 +67,51 @@ impl PluginRegistry for PluginRegistryImpl {
             .find(|entry| entry.metadata.id == id)
             .map(Entry::info)
     }
+
+    fn plugin_admin_data<'a>(
+        &'a self,
+        id: &'a str,
+    ) -> infrarust_api::event::BoxFuture<
+        'a,
+        Result<serde_json::Value, infrarust_api::error::PluginError>,
+    > {
+        let plugin = read(&self.data)
+            .iter()
+            .find(|entry| entry.metadata.id == id)
+            .and_then(|entry| entry.plugin.upgrade());
+        Box::pin(async move {
+            let plugin = plugin.ok_or_else(|| {
+                infrarust_api::error::PluginError::Service(
+                    infrarust_api::error::ServiceError::NotFound(format!("plugin '{id}'")),
+                )
+            })?;
+            plugin.admin_data().await
+        })
+    }
+
+    fn plugin_admin_action<'a>(
+        &'a self,
+        id: &'a str,
+        action: &'a str,
+        input: serde_json::Value,
+    ) -> infrarust_api::event::BoxFuture<
+        'a,
+        Result<serde_json::Value, infrarust_api::error::PluginError>,
+    > {
+        let plugin = read(&self.data)
+            .iter()
+            .find(|entry| entry.metadata.id == id)
+            .and_then(|entry| entry.plugin.upgrade());
+        let action = action.to_owned();
+        Box::pin(async move {
+            let plugin = plugin.ok_or_else(|| {
+                infrarust_api::error::PluginError::Service(
+                    infrarust_api::error::ServiceError::NotFound(format!("plugin '{id}'")),
+                )
+            })?;
+            plugin.admin_action(&action, input).await
+        })
+    }
 }
 
 #[cfg(test)]

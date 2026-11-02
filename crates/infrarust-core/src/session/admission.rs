@@ -73,6 +73,10 @@ pub(crate) async fn admit(
     let bus = &services.event_bus;
     let remote_addr = ctx.client_addr();
     let online_mode = kind.online_mode();
+    // Preserve the authenticated identity before plugins can edit the profile
+    // in GameProfileRequestEvent. The session profile remains mutable for
+    // compatibility, but security decisions must use this original UUID.
+    let authenticated_uuid = online_mode.then_some(arrival.profile.uuid);
 
     let request = bus
         .fire(GameProfileRequestEvent::new(
@@ -114,6 +118,7 @@ pub(crate) async fn admit(
         Arc::clone(&services.backend_load),
     )
     .kind(kind)
+    .authenticated_uuid(authenticated_uuid)
     .permissions(Arc::clone(&services.permission_service))
     .virtual_host(arrival.domain)
     .events(Arc::clone(bus))

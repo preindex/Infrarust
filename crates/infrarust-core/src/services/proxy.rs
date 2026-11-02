@@ -7,6 +7,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_server_manager::ServerManagerService;
 use tokio::sync::mpsc;
 
+use crate::admission::AdmissionService;
 use crate::ban::manager::BanManager;
 use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
@@ -50,6 +51,8 @@ pub struct ProxyServices {
     pub server_manager: Option<Arc<ServerManagerService>>,
     /// Ban manager for checking and issuing bans.
     pub ban_manager: Arc<BanManager>,
+    /// Plugin-owned admission guards for configured destinations.
+    pub admission_service: Arc<AdmissionService>,
     /// Proxy configuration.
     pub config: Arc<ProxyConfig>,
     /// Path of the `infrarust.toml` the proxy was started from.

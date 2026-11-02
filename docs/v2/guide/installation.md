@@ -99,9 +99,10 @@ Enable features at compile time with `--features`:
 | Feature | Default | What it adds |
 |---------|---------|-------------|
 | `libdeflater` | yes | libdeflate packet compression (needs a C compiler) |
-| `default-plugins` | yes | Bundles `plugin-auth` and `plugin-server-wake` |
+| `default-plugins` | yes | Bundles `plugin-auth`, `plugin-server-wake`, and `plugin-discord` |
 | `plugin-auth` | via `default-plugins` | Built-in authentication plugin |
 | `plugin-server-wake` | via `default-plugins` | Holds players in limbo while their target server starts up |
+| `plugin-discord` | via `default-plugins` | Discord bot, account linking, and Discord community gate |
 | `plugin-hello` | no | Example hello-world plugin |
 | `docker` | no | Docker integration for managing backend containers |
 | `telemetry` | no | OpenTelemetry tracing export |

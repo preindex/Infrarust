@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use infrarust_api::command::{
-    CommandError, CommandHandler, CommandInfo, CommandManager, CommandRegistration, CommandSpec,
+    CommandDispatchOutcome, CommandError, CommandHandler, CommandInfo, CommandManager,
+    CommandRegistration, CommandSource, CommandSpec,
 };
 use infrarust_api::event::bus::{
     ErasedAsyncHandler, ErasedEvent, ErasedHandler, EventBus, FireError,
@@ -19,6 +20,7 @@ use infrarust_api::filter::{
     CodecFilterFactory, CodecFilterRegistry, FilterRegistryError, TransportFilter,
     TransportFilterRegistry,
 };
+use infrarust_api::permissions::{Capability, CapabilitySet};
 use infrarust_api::services::scheduler::{AsyncTask, RepeatingTask, Scheduler, TaskHandle};
 
 use crate::event_bus::EventBusImpl;
@@ -162,14 +164,20 @@ pub struct TrackingCommandManager {
     inner: Arc<CommandManagerImpl>,
     commands: Mutex<Vec<String>>,
     plugin_id: String,
+    capabilities: CapabilitySet,
 }
 
 impl TrackingCommandManager {
-    pub fn new(inner: Arc<CommandManagerImpl>, plugin_id: String) -> Self {
+    pub fn new(
+        inner: Arc<CommandManagerImpl>,
+        plugin_id: String,
+        capabilities: CapabilitySet,
+    ) -> Self {
         Self {
             inner,
             commands: Mutex::new(Vec::new()),
             plugin_id,
+            capabilities,
         }
     }
 
@@ -190,6 +198,35 @@ impl TrackingCommandManager {
 impl infrarust_api::command::private::Sealed for TrackingCommandManager {}
 
 impl CommandManager for TrackingCommandManager {
+    fn dispatch<'a>(
+        &'a self,
+        source: CommandSource,
+        input: &'a str,
+    ) -> BoxFuture<'a, CommandDispatchOutcome> {
+        if !self.capabilities.has(Capability::Command)
+            || !self.capabilities.has(Capability::CommandDispatch)
+        {
+            tracing::warn!(
+                plugin = %self.plugin_id,
+                "command dispatch denied: missing required capabilities"
+            );
+            return Box::pin(async { CommandDispatchOutcome::Denied });
+        }
+        Box::pin(async move {
+            match self.inner.dispatch(source, input).await {
+                crate::services::command_manager::DispatchOutcome::Executed => {
+                    CommandDispatchOutcome::Executed
+                }
+                crate::services::command_manager::DispatchOutcome::Denied => {
+                    CommandDispatchOutcome::Denied
+                }
+                crate::services::command_manager::DispatchOutcome::Unknown => {
+                    CommandDispatchOutcome::Unknown
+                }
+            }
+        })
+    }
+
     fn register(
         &self,
         spec: CommandSpec,

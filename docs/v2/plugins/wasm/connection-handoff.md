@@ -81,6 +81,8 @@ let handoff = Handoff::to(HandoffTarget::server_port("modded", 30037))
 | `ServerPort { server, port }` | The host of the address the load balancer picks for `server`, on `port` instead of the Minecraft port. Meant for a file server that runs next to the Minecraft backend. For a WASM plugin, a port other than the server's own needs the plugin's [network allow-list](./network#connection-handoffs) for every address of that server |
 | `Address { host, port }` | An explicit address. For a WASM plugin, the host checks it against the plugin's [network allow-list](./network) when it reads the answer, see [Address targets](#address-targets) |
 
+Discord-gated servers cannot be reached through a handoff. `Route`, `Server` and `ServerPort` are refused when their source or target is protected, and stale route configurations are refused before connecting. When any Discord-gated server is configured, explicit `Address` targets are refused because they do not carry a server identity the proxy can check. This applies to raw claims too, which run before route resolution.
+
 The connection uses the target server's `timeouts.connect`, or the proxy's `connect_timeout` for an `Address`. A handoff that cannot be carried out (a `prefix` or a `reply` over 64 KiB, a target that cannot be reached, an unknown server, `Route` on a raw claim) logs the warning `connection handoff failed, closing the connection` and closes the client connection without sending it anything. The size check comes first, so an oversized handoff never reaches the target.
 
 ### Replay

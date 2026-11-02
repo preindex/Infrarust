@@ -238,6 +238,55 @@ pub(crate) async fn resolve_initial_mode(
     } else {
         Pending::nothing()
     };
+    let admission = if initial_mode.is_none() {
+        match services
+            .admission_service
+            .authorize(
+                player,
+                &target_server_id,
+                server_config,
+                &services.domain_router,
+                player.shutdown_token(),
+                infrarust_api::services::AdmissionStage::InitialConnection,
+            )
+            .await
+        {
+            Ok(crate::admission::Authorization::Admitted(admission)) => Some(admission),
+            Ok(crate::admission::Authorization::Hold {
+                namespace,
+                handler,
+                authenticated_uuid,
+            }) => {
+                let limbo_handler = match services
+                    .limbo_handler_registry
+                    .get_owned(&handler, &namespace)
+                {
+                    Ok(handler) => handler,
+                    Err(error) => {
+                        tracing::warn!(%namespace, %handler, %error, "admission limbo handler is unavailable");
+                        return deny_limbo(ctx, &mut io.client, HANDLER_UNAVAILABLE).await;
+                    }
+                };
+                prepare_client_for_limbo(ctx, io, progress, &target_server_id).await?;
+                initial_mode = Some(ConnectionMode::Limbo(
+                    vec![limbo_handler],
+                    crate::admission::AdmissionService::hold_context(
+                        namespace,
+                        handler,
+                        target_server_id.clone(),
+                        authenticated_uuid,
+                    ),
+                ));
+                None
+            }
+            Err(reason) => {
+                io.client.disconnect(&reason, ctx.registry()).await.ok();
+                return Ok(kicked(reason));
+            }
+        }
+    } else {
+        None
+    };
     let woken = if initial_mode.is_none() {
         wake(services, server_config, player.shutdown_token()).await
     } else {
@@ -259,7 +308,6 @@ pub(crate) async fn resolve_initial_mode(
 
         let forwarding_handler = services.resolve_forwarding_handler(server_config);
         let bridged = progress.bridges_backend_login(&forwarding_handler);
-
         let mut join = ServerJoin::new(player, target_server_id.clone());
         let addresses = BackendTargets::addresses_or_config(backend_targets, server_config);
         let login = if progress.completed {
@@ -269,6 +317,16 @@ pub(crate) async fn resolve_initial_mode(
         } else {
             Login::Relay
         };
+        // This is the admission commit point: no asynchronous work occurs
+        // between checking the current route/provider and starting connect.
+        if let Some(admission) = &admission
+            && let Err(reason) = services
+                .admission_service
+                .confirm(admission, &services.domain_router)
+        {
+            io.client.disconnect(&reason, ctx.registry()).await.ok();
+            return Ok(kicked(reason));
+        }
         match connect_backend(ctx, &routing.config_id, server_config, &addresses, login).await {
             Ok(backend) => {
                 progress.completed |= bridged;

@@ -227,6 +227,7 @@ impl ProxyServer {
             packet_registry: Arc::clone(&packet_registry),
             server_manager: server_manager.clone(),
             ban_manager: Arc::clone(&ban_manager),
+            admission_service: Arc::new(crate::admission::AdmissionService::default()),
             config: Arc::new(config.clone()),
             config_path,
             domain_router: Arc::clone(&domain_router),

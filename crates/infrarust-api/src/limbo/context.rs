@@ -4,7 +4,21 @@ use crate::types::{Component, ServerId};
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum LimboEntryContext {
-    InitialConnection { target_server: ServerId },
-    KickedFromServer { server: ServerId, reason: Component },
-    PluginRedirect { from_server: Option<ServerId> },
+    InitialConnection {
+        target_server: ServerId,
+    },
+    /// A plugin admission guard requested a hold before the destination.
+    AdmissionGuard {
+        namespace: String,
+        target_server: ServerId,
+        authenticated_uuid: uuid::Uuid,
+        handler: String,
+    },
+    KickedFromServer {
+        server: ServerId,
+        reason: Component,
+    },
+    PluginRedirect {
+        from_server: Option<ServerId>,
+    },
 }

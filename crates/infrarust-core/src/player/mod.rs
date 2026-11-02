@@ -159,6 +159,10 @@ impl WarnWindow {
 pub struct PlayerSession {
     player_id: PlayerId,
     profile: GameProfile,
+    /// Mojang identity captured before `GameProfileRequestEvent` handlers can
+    /// rewrite the mutable session profile. Only intercepted online-mode
+    /// sessions may populate this field.
+    authenticated_uuid: Option<Uuid>,
     protocol_version: ProtocolVersion,
     remote_addr: SocketAddr,
     routing: RwLock<Routing>,
@@ -219,6 +223,7 @@ impl SessionKind {
 pub struct PlayerSessionBuilder {
     player_id: PlayerId,
     profile: GameProfile,
+    authenticated_uuid: Option<Uuid>,
     protocol_version: ProtocolVersion,
     remote_addr: SocketAddr,
     command_tx: mpsc::Sender<PlayerCommand>,
@@ -233,6 +238,12 @@ pub struct PlayerSessionBuilder {
 }
 
 impl PlayerSessionBuilder {
+    #[must_use]
+    pub(crate) const fn authenticated_uuid(mut self, uuid: Option<Uuid>) -> Self {
+        self.authenticated_uuid = uuid;
+        self
+    }
+
     #[must_use]
     pub const fn kind(mut self, kind: SessionKind) -> Self {
         self.kind = kind;
@@ -274,6 +285,7 @@ impl PlayerSessionBuilder {
         Arc::new_cyclic(|shared| PlayerSession {
             player_id: self.player_id,
             profile: self.profile,
+            authenticated_uuid: self.authenticated_uuid,
             protocol_version: self.protocol_version,
             remote_addr: self.remote_addr,
             routing: RwLock::new(Routing {
@@ -320,6 +332,7 @@ impl PlayerSession {
         PlayerSessionBuilder {
             player_id,
             profile,
+            authenticated_uuid: None,
             protocol_version,
             remote_addr,
             command_tx,
@@ -332,6 +345,10 @@ impl PlayerSession {
             virtual_host: None,
             events: None,
         }
+    }
+
+    pub(crate) const fn authenticated_uuid(&self) -> Option<Uuid> {
+        self.authenticated_uuid
     }
 
     fn shared_player(&self) -> Option<Arc<dyn Player>> {

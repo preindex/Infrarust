@@ -21,9 +21,11 @@ use crate::permissions::{
     PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
 };
 use crate::services::{
+    admission_guard::AdmissionGuard,
     ban_service::{BanProvider, BanService},
     config_service::ConfigService,
     load_balancer::LoadBalancerService,
+    log_service::LogService,
     player_registry::PlayerRegistry,
     plugin_registry::PluginRegistry,
     providers::ProviderRejected,
@@ -52,6 +54,221 @@ pub struct PluginMetadata {
     pub description: Option<String>,
     /// Other plugins this plugin depends on.
     pub dependencies: Vec<PluginDependency>,
+    /// Optional declarative page rendered by the host admin UI.
+    pub admin_page: Option<PluginAdminPage>,
+}
+
+/// A versioned, host-rendered plugin administration page.
+///
+/// Contributions contain data only; plugins cannot supply executable UI.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PluginAdminPage {
+    pub version: u16,
+    pub slug: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub fields: Vec<PluginAdminField>,
+    /// Host-rendered dashboard components, composed from the admin UI library.
+    pub components: Vec<PluginAdminComponent>,
+    /// Named operations exposed as buttons by this page.
+    pub actions: Vec<PluginAdminAction>,
+}
+
+impl PluginAdminPage {
+    pub fn new(version: u16, slug: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            version,
+            slug: slug.into(),
+            title: title.into(),
+            description: None,
+            fields: Vec::new(),
+            components: Vec::new(),
+            actions: Vec::new(),
+        }
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn field(mut self, field: PluginAdminField) -> Self {
+        self.fields.push(field);
+        self
+    }
+
+    pub fn component(mut self, component: PluginAdminComponent) -> Self {
+        self.components.push(component);
+        self
+    }
+
+    pub fn action(mut self, action: PluginAdminAction) -> Self {
+        self.actions.push(action);
+        self
+    }
+}
+
+/// A page component rendered by the host dashboard. Data paths address values
+/// returned by [`Plugin::admin_data`].
+#[derive(Debug, Clone)]
+pub enum PluginAdminComponent {
+    Stack {
+        children: Vec<PluginAdminComponent>,
+    },
+    Grid {
+        columns: u8,
+        children: Vec<PluginAdminComponent>,
+    },
+    Card {
+        title: String,
+        children: Vec<PluginAdminComponent>,
+    },
+    Text {
+        content: String,
+    },
+    Callout {
+        content: String,
+        tone: PluginAdminTone,
+    },
+    Metric {
+        label: String,
+        value_path: String,
+        note: Option<String>,
+    },
+    Table {
+        data_path: String,
+        columns: Vec<PluginAdminColumn>,
+        empty_text: Option<String>,
+        row_action: Option<String>,
+    },
+    Button {
+        label: String,
+        action: String,
+        destructive: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PluginAdminColumn {
+    pub key: String,
+    pub label: String,
+}
+
+impl PluginAdminColumn {
+    pub fn new(key: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginAdminTone {
+    Neutral,
+    Good,
+    Warn,
+    Bad,
+    Info,
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PluginAdminAction {
+    pub id: String,
+    pub label: String,
+    pub confirmation: Option<String>,
+    pub destructive: bool,
+}
+
+impl PluginAdminAction {
+    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            confirmation: None,
+            destructive: false,
+        }
+    }
+
+    pub fn confirmation(mut self, message: impl Into<String>) -> Self {
+        self.confirmation = Some(message.into());
+        self
+    }
+
+    pub fn destructive(mut self) -> Self {
+        self.destructive = true;
+        self
+    }
+}
+
+/// One host-rendered setting control on a [`PluginAdminPage`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PluginAdminField {
+    /// A two-part TOML key, such as `links.code_ttl_seconds`.
+    pub key: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub kind: PluginAdminFieldKind,
+    pub minimum: Option<u64>,
+    pub maximum: Option<u64>,
+    pub default_integer: Option<u64>,
+    pub default_strings: Vec<String>,
+    pub max_items: Option<usize>,
+}
+
+impl PluginAdminField {
+    pub fn integer(
+        key: impl Into<String>,
+        label: impl Into<String>,
+        default: u64,
+        minimum: u64,
+        maximum: u64,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            description: None,
+            kind: PluginAdminFieldKind::Integer,
+            minimum: Some(minimum),
+            maximum: Some(maximum),
+            default_integer: Some(default),
+            default_strings: Vec::new(),
+            max_items: None,
+        }
+    }
+
+    pub fn uuid_list(
+        key: impl Into<String>,
+        label: impl Into<String>,
+        maximum_items: usize,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            description: None,
+            kind: PluginAdminFieldKind::UuidList,
+            minimum: None,
+            maximum: None,
+            default_integer: None,
+            default_strings: Vec::new(),
+            max_items: Some(maximum_items),
+        }
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginAdminFieldKind {
+    Integer,
+    UuidList,
 }
 
 /// Tracks the lifecycle state of a plugin.
@@ -303,6 +520,28 @@ pub trait Plugin: Send + Sync {
     fn runtime_status(&self) -> Option<PluginRuntimeStatus> {
         None
     }
+
+    /// Supplies live data for the host-rendered admin dashboard. Plugins can
+    /// return JSON values addressed by the contribution's component paths.
+    fn admin_data(&self) -> BoxFuture<'_, Result<serde_json::Value, PluginError>> {
+        Box::pin(async { Ok(serde_json::json!({})) })
+    }
+
+    /// Handles a named admin operation declared by this plugin's page.
+    /// Operations are available only through the authenticated admin API.
+    fn admin_action<'a>(
+        &'a self,
+        _action: &'a str,
+        _input: serde_json::Value,
+    ) -> BoxFuture<'a, Result<serde_json::Value, PluginError>> {
+        Box::pin(async {
+            Err(PluginError::Service(
+                crate::error::ServiceError::OperationFailed(
+                    "admin action is not implemented".into(),
+                ),
+            ))
+        })
+    }
 }
 
 impl PluginMetadata {
@@ -314,6 +553,7 @@ impl PluginMetadata {
             authors: vec![],
             description: None,
             dependencies: vec![],
+            admin_page: None,
         }
     }
 
@@ -326,6 +566,12 @@ impl PluginMetadata {
     /// Sets the description.
     pub fn description(mut self, desc: impl Into<String>) -> Self {
         self.description = Some(desc.into());
+        self
+    }
+
+    /// Adds a declarative, host-rendered admin page.
+    pub fn admin_page(mut self, page: PluginAdminPage) -> Self {
+        self.admin_page = Some(page);
         self
     }
 
@@ -366,6 +612,13 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     fn register_permission_provider(
         &self,
         provider: Arc<dyn PermissionProvider>,
+    ) -> Result<(), ProviderRejected>;
+
+    /// Registers an admission guard under the calling plugin's own namespace.
+    /// The namespace is used to select the corresponding server policy.
+    fn register_admission_guard(
+        &self,
+        guard: Arc<dyn AdmissionGuard>,
     ) -> Result<(), ProviderRejected>;
 
     fn register_permission_node(&self, node: PermissionNode) -> Result<(), PermissionNodeError>;
@@ -409,6 +662,17 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry>;
 
     fn connection_claims(&self) -> Option<&dyn ConnectionClaimRegistry> {
+        None
+    }
+
+    /// Returns the live proxy log stream.
+    ///
+    /// Returns `Some` only if the plugin holds [`Capability::LogRead`], which
+    /// the operator must grant explicitly in the plugin's native `permissions`.
+    /// Otherwise `None`.
+    ///
+    /// [`Capability::LogRead`]: crate::permissions::Capability::LogRead
+    fn log_service(&self) -> Option<Arc<dyn LogService>> {
         None
     }
 

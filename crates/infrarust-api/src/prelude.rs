@@ -25,8 +25,9 @@ pub use crate::events::*;
 
 // Plugin lifecycle
 pub use crate::plugin::{
-    Plugin, PluginContext, PluginDependency, PluginHealth, PluginMetadata, PluginRuntimeStatus,
-    PluginState,
+    Plugin, PluginAdminAction, PluginAdminColumn, PluginAdminComponent, PluginAdminField,
+    PluginAdminFieldKind, PluginAdminPage, PluginAdminTone, PluginContext, PluginDependency,
+    PluginHealth, PluginMetadata, PluginRuntimeStatus, PluginState,
 };
 
 // Player
@@ -43,12 +44,14 @@ pub use crate::messaging::{
 
 // Services
 pub use crate::services::{
-    BackendState, BackendStatus, BanEntry, BanFeatures, BanPage, BanProvider, BanQuery, BanRequest,
-    BanService, BanSource, BanTarget, BanVerdict, ConfigService, ConfigWriteError, KeepaliveInfo,
-    LbError, LoadBalancerService, LoginAttempt, LoginStage, PlayerRegistry, PluginInfo,
-    PluginRegistry, ProviderKind, ProviderRejected, ProxyInfo, ProxyMode, RateLimitInfo, Scheduler,
-    ServerConfig, ServerManager, ServerSource, ServerState, ServiceHandle, ServiceRegistry,
-    ServiceRegistryExt, StatusCacheInfo, TaskHandle, UnbanRequest, UnknownDomainBehavior,
+    AdmissionDecision, AdmissionGuard, AdmissionPolicy, AdmissionRequest, AdmissionRequirements,
+    AdmissionStage, BackendState, BackendStatus, BanEntry, BanFeatures, BanPage, BanProvider,
+    BanQuery, BanRequest, BanService, BanSource, BanTarget, BanVerdict, ConfigService,
+    ConfigWriteError, KeepaliveInfo, LbError, LoadBalancerService, LoginAttempt, LoginStage,
+    PlayerRegistry, PluginInfo, PluginRegistry, ProviderKind, ProviderRejected, ProxyInfo,
+    ProxyMode, RateLimitInfo, Scheduler, ServerConfig, ServerManager, ServerSource, ServerState,
+    ServiceHandle, ServiceRegistry, ServiceRegistryExt, StatusCacheInfo, TaskHandle, UnbanRequest,
+    UnknownDomainBehavior,
 };
 
 // Permissions and capabilities
@@ -70,8 +73,9 @@ pub use crate::virtual_backend::{VirtualBackendHandler, VirtualBackendSession};
 
 // Commands
 pub use crate::command::{
-    CommandContext, CommandError, CommandHandler, CommandInfo, CommandManager, CommandRegistration,
-    CommandSource, CommandSpec, SuggestContext, Suggestion,
+    CommandContext, CommandDispatchOutcome, CommandError, CommandHandler, CommandInfo,
+    CommandManager, CommandRegistration, CommandSource, CommandSpec, RemoteCommandSource,
+    SuggestContext, Suggestion,
 };
 
 // Proxy messages

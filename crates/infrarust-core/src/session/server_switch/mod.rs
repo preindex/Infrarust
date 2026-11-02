@@ -69,6 +69,7 @@ pub(crate) async fn perform_switch(
     io: &mut SessionIo,
     current_server: &ServerId,
     target: SwitchTarget,
+    admission_stage: infrarust_api::services::AdmissionStage,
 ) -> Result<SwitchResult, CoreError> {
     let client = &mut io.client;
     let services = ctx.services;
@@ -152,12 +153,58 @@ pub(crate) async fn perform_switch(
             })?
     };
 
+    // Covers the approved limbo release too, which skips the pre-connect event.
+    let authorization = match services
+        .admission_service
+        .authorize(
+            session,
+            &effective_target,
+            &server_config,
+            &services.domain_router,
+            session.shutdown_token(),
+            admission_stage,
+        )
+        .await
+    {
+        Ok(admission) => admission,
+        Err(reason) => return Ok(SwitchResult::Denied(reason)),
+    };
+    let admission = match authorization {
+        crate::admission::Authorization::Admitted(admission) => admission,
+        crate::admission::Authorization::Hold {
+            namespace,
+            handler,
+            authenticated_uuid,
+        } => {
+            let limbo_handler = match services
+                .limbo_handler_registry
+                .get_owned(&handler, &namespace)
+            {
+                Ok(handler) => handler,
+                Err(error) => {
+                    tracing::warn!(%namespace, %handler, %error, "admission limbo handler is unavailable");
+                    return Ok(SwitchResult::Denied(Component::text(
+                        infrarust_api::limbo::HANDLER_UNAVAILABLE,
+                    )));
+                }
+            };
+            return Ok(SwitchResult::Limbo(
+                vec![limbo_handler],
+                crate::admission::AdmissionService::hold_context(
+                    namespace,
+                    handler,
+                    effective_target,
+                    authenticated_uuid,
+                ),
+            ));
+        }
+    };
+
     if let Err(unavailable) = wake(services, &server_config, session.shutdown_token()).await {
         return Ok(SwitchResult::Failed(
             unavailable.into_kick(effective_target),
         ));
     }
-
     // Same strategy + unhealthy-last ordering as the login pipeline.
     let addresses = crate::loadbalancer::select_backend_addresses(
         &server_config,
@@ -165,6 +212,15 @@ pub(crate) async fn perform_switch(
         services.pending_backends.as_ref(),
         services.backend_health.as_ref(),
     );
+
+    // This is the admission commit point: no asynchronous work occurs
+    // between checking the current route/provider and starting connect.
+    if let Err(reason) = services
+        .admission_service
+        .confirm(&admission, &services.domain_router)
+    {
+        return Ok(SwitchResult::Denied(reason));
+    }
 
     let mut new_backend = match connect_backend(
         ctx,

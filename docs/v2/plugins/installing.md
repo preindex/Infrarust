@@ -78,10 +78,14 @@ Additional capabilities that require an explicit grant:
 | `filesystem-extended` | See the host folders listed in `[[plugins.<id>.wasm.mounts]]` |
 | `network` | Reach the destinations listed in `[plugins.<id>.wasm.network] allow` |
 
-Two more capability strings exist in the model. `transport-filter` is the one value that config parsing refuses outright: it is native-only and listing it in `permissions` puts it on the rejected list. `virtual-backend` parses fine but its proxy-side bridge is not yet implemented, so granting it does nothing today. Treat it as planned.
+`log-read` is the exception among native capabilities: trusted native plugins do not receive it by default. The operator must list `log-read` in the plugin's `permissions` to let it read the live proxy log stream, which can include player names, UUIDs and IP addresses. See [Discord console log forwarding](./builtin/discord#console-log-forwarding) for an opt-in example.
+
+`command-dispatch` is reserved for trusted native plugins, which receive it from the native-trusted capability profile unless denied. Config parsing refuses it, so WASM plugins cannot request it. This is separate from the baseline `command` capability, which only allows command registration.
+
+`transport-filter` and `log-read` are also native-only, and listing either in `permissions` for a WASM plugin puts it on the rejected list. `virtual-backend` parses fine but its proxy-side bridge is not yet implemented, so granting it does nothing today. Treat it as planned.
 
 ::: warning
-Unknown capability strings and `transport-filter` are skipped rather than granted. Infrarust logs a warning to the tracing output for each one, so check the startup log if a plugin behaves like it lacks a permission you listed.
+Unknown capability strings and the native-only capabilities `command-dispatch`, `transport-filter` and `log-read` are skipped rather than granted for WASM plugins. Infrarust logs a warning to the tracing output for each one, so check the startup log if a plugin behaves like it lacks a permission you listed.
 :::
 
 ## Built-in plugins
@@ -91,16 +95,17 @@ Built-in plugins are compiled into the binary and activated by Cargo feature fla
 | Plugin | Feature flag | Activated by |
 |--------|-------------|--------------|
 | Auth | `plugin-auth` | build flag, on by default |
+| Discord Community Gate | `plugin-discord` | build flag, on by default |
 | Server wake | `plugin-server-wake` | build flag, on by default |
 | Admin API and Web UI | always compiled | `[web]` section present in `infrarust.toml` |
 
-The `default-plugins` feature pulls in both `plugin-auth` and `plugin-server-wake`, so a stock build has both. To build without them, disable the default features and pick only what you want:
+The `default-plugins` feature pulls in `plugin-auth`, `plugin-server-wake`, and `plugin-discord`, so a stock build has all three. To build without them, disable the default features and pick only what you want:
 
 ```bash
 cargo build --release --no-default-features --features "plugin-server-wake"
 ```
 
-The Auth plugin's limbo handler and the Server wake plugin's hold logic are only active when those features are compiled in. Dropping `plugin-auth` from the build also removes the `/login` and `/register` commands.
+The Auth plugin's limbo handler and the Server wake plugin's hold logic are only active when those features are compiled in. Dropping `plugin-auth` from the build also removes the `/login` and `/register` commands. The Discord gate requires a bot token at runtime; without one, the plugin cannot verify membership, so authorization fails closed and protected servers stay closed.
 
 ## Checking loaded plugins
 

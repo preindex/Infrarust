@@ -2,6 +2,7 @@
 
 use crate::error::ErrorKind;
 use crate::types::ServerId;
+use std::collections::HashMap;
 
 pub mod private {
     /// Sealed — only the proxy implements [`ConfigService`](super::ConfigService).
@@ -27,6 +28,10 @@ pub struct ServerConfig {
     pub proxy_mode: ProxyMode,
     /// Ordered list of limbo handler names to apply.
     pub limbo_handlers: Vec<String>,
+    /// Namespaced provider configuration for admission guards.
+    pub admission_policies: HashMap<String, crate::services::AdmissionPolicy>,
+    /// Admission guard namespaces required before joining this server.
+    pub admission_guards: Vec<String>,
     /// Maximum number of players (0 = unlimited).
     pub max_players: u32,
     /// Disconnect message sent when the backend is unreachable.
@@ -46,6 +51,8 @@ impl ServerConfig {
             domains: Vec::new(),
             proxy_mode: ProxyMode::Passthrough,
             limbo_handlers: Vec::new(),
+            admission_policies: HashMap::new(),
+            admission_guards: Vec::new(),
             max_players: 0,
             disconnect_message: None,
             send_proxy_protocol: false,
@@ -80,6 +87,31 @@ impl ServerConfig {
     #[must_use]
     pub fn limbo_handlers(mut self, limbo_handlers: Vec<String>) -> Self {
         self.limbo_handlers = limbo_handlers;
+        self
+    }
+
+    #[must_use]
+    pub fn admission_policy(
+        mut self,
+        namespace: impl Into<String>,
+        policy: crate::services::AdmissionPolicy,
+    ) -> Self {
+        self.admission_policies.insert(namespace.into(), policy);
+        self
+    }
+
+    #[must_use]
+    pub fn admission_policy_map(
+        mut self,
+        policies: HashMap<String, crate::services::AdmissionPolicy>,
+    ) -> Self {
+        self.admission_policies = policies;
+        self
+    }
+
+    #[must_use]
+    pub fn admission_guards(mut self, admission_guards: Vec<String>) -> Self {
+        self.admission_guards = admission_guards;
         self
     }
 

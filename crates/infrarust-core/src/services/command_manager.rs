@@ -393,11 +393,12 @@ impl Default for CommandManagerImpl {
 }
 
 fn permitted(entry: &Entry, source: &CommandSource) -> bool {
-    entry
-        .spec
-        .permission
-        .as_deref()
-        .is_none_or(|node| source.has_permission(node))
+    match (source.is_remote(), entry.spec.permission.as_deref()) {
+        (true, Some(node)) => source.has_permission(node),
+        (true, None) => false,
+        (false, Some(node)) => source.has_permission(node),
+        (false, None) => true,
+    }
 }
 
 fn visible_to(entry: &Entry, source: &CommandSource) -> bool {

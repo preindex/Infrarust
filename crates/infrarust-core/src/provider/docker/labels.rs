@@ -2,8 +2,8 @@
 //!
 //! Converts Docker labels (`infrarust.*`) to `ServerConfig` and resolves
 //! container network addresses. Standalone containers accept the original
-//! key set; swarm service labels accept the wider set documented on
-//! [`service_labels_to_server_config`].
+//! keys plus deprecated Discord admission aliases; swarm service labels accept the wider set
+//! documented on [`service_labels_to_server_config`].
 
 use std::collections::HashMap;
 
@@ -29,16 +29,16 @@ const MOTD_STATES: [&str; 6] = [
 /// Which label vocabulary applies to a labelled object.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LabelScope {
-    /// Standalone containers: the original `infrarust.*` keys only.
+    /// Standalone containers: container keys plus shared legacy admission keys.
     Container,
-    /// Swarm services: the container keys plus service-level settings.
+    /// Swarm services: container keys, shared legacy admission keys, and service settings.
     Service,
 }
 
 /// Converts Docker container labels to a `ServerConfig`.
 ///
-/// Only the original container key set is read, so standalone container
-/// discovery behaves exactly as before.
+/// Standalone containers accept the original container keys and deprecated
+/// Discord admission aliases, but not the swarm-only settings.
 pub fn labels_to_server_config(
     container_name: &str,
     labels: &HashMap<String, String>,
@@ -49,7 +49,8 @@ pub fn labels_to_server_config(
 
 /// Converts swarm service labels (`Spec.Labels`) to a `ServerConfig`.
 ///
-/// Accepts the container keys plus these service-level keys:
+/// Accepts the container keys plus the shared legacy admission keys and these
+/// service-level keys:
 ///
 /// - `infrarust.forwarding_mode`: `none`, `bungeecord`, `bungeeguard`, `velocity`
 /// - `infrarust.domain_rewrite`: `none`, `from_backend`, or an explicit domain
@@ -59,9 +60,15 @@ pub fn labels_to_server_config(
 /// - `infrarust.timeouts.connect`, `.read`, `.write` (durations, e.g. `"5s"`)
 /// - `infrarust.max_players`, `infrarust.balance`, `infrarust.limbo_handlers`
 ///
-/// Invalid values are logged and ignored one key at a time. Secrets are never
-/// read from labels: server-manager credentials and favicon payloads are not
-/// mapped.
+/// Both standalone containers and services accept `infrarust.admissionGuards`
+/// and JSON-valued `infrarust.admissionPolicy.<plugin-id>` labels. Deprecated
+/// aliases `infrarust.discordCommunity`,
+/// `infrarust.discordCommunities`, and `infrarust.whitelistThroughDiscord`.
+///
+/// Invalid values are logged and ignored one key at a time, except that an
+/// invalid legacy Discord community ID invalidates that whole list to avoid silently
+/// weakening an any-of policy. Secrets are never read from labels:
+/// server-manager credentials and favicon payloads are not mapped.
 pub fn service_labels_to_server_config(
     service_name: &str,
     labels: &HashMap<String, String>,
@@ -105,6 +112,9 @@ fn build_server_config(
         host: address.to_string(),
         port: infrarust_config::DEFAULT_MC_PORT,
     });
+    let (discord_communities, whitelist_through_discord) = parse_discord_settings(labels);
+    let (admission_guards, admission_policies) =
+        parse_admission_settings(labels, whitelist_through_discord);
 
     // Deserializing through a toml::Table (instead of a struct literal) keeps
     // serde defaults for all unset fields and escapes label values correctly.
@@ -130,6 +140,21 @@ fn build_server_config(
         if let Some(network) = &network {
             table.insert("network".into(), Value::String(network.clone()));
         }
+        table.insert(
+            "admission_guards".into(),
+            Value::Array(
+                admission_guards
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+        table.insert(
+            "admission_policies".into(),
+            Value::try_from(admission_policies.clone())?,
+        );
+        insert_discord_settings(&mut table, &discord_communities, whitelist_through_discord);
         if let Some(text) = labels.get("infrarust.motd.text") {
             let mut online = Table::new();
             online.insert("text".into(), Value::String(text.clone()));
@@ -172,9 +197,126 @@ fn build_server_config(
             ip_filter: None,
             disconnect_message: None,
             limbo_handlers: Vec::new(),
+            admission_guards,
+            admission_policies,
+            discord_communities,
+            whitelist_through_discord,
             bungeecord_channel: false,
         }
     })
+}
+
+fn parse_admission_settings(
+    labels: &HashMap<String, String>,
+    legacy_enabled: bool,
+) -> (Vec<String>, HashMap<String, serde_json::Value>) {
+    let mut guards = labels
+        .get("infrarust.admissionGuards")
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut policies = HashMap::new();
+    for (key, value) in labels {
+        let Some(namespace) = key.strip_prefix("infrarust.admissionPolicy.") else {
+            continue;
+        };
+        match serde_json::from_str::<serde_json::Value>(value) {
+            Ok(policy) => {
+                policies.insert(namespace.to_owned(), policy);
+            }
+            Err(error) => {
+                tracing::warn!(label = %key, %error, "invalid admission policy JSON label")
+            }
+        }
+    }
+    if legacy_enabled && !guards.iter().any(|guard| guard == "discord") {
+        guards.push("discord".to_owned());
+    }
+    (guards, policies)
+}
+
+fn parse_discord_settings(labels: &HashMap<String, String>) -> (Vec<String>, bool) {
+    if labels.contains_key("infrarust.discordCommunity")
+        || labels.contains_key("infrarust.discordCommunities")
+        || labels.contains_key("infrarust.whitelistThroughDiscord")
+    {
+        tracing::warn!(
+            "legacy Discord admission labels are deprecated; use infrarust.admissionGuards and infrarust.admissionPolicy.<plugin-id>"
+        );
+    }
+    let mut communities = Vec::new();
+    let mut invalid_community = false;
+    if let Some(raw) = labels.get("infrarust.discordCommunity") {
+        match parse_discord_guild_id("infrarust.discordCommunity", raw) {
+            Some(id) => communities.push(id),
+            None => invalid_community = true,
+        }
+    }
+    if let Some(raw) = labels.get("infrarust.discordCommunities") {
+        for raw_id in raw.split(',') {
+            match parse_discord_guild_id("infrarust.discordCommunities", raw_id) {
+                Some(id) if !communities.contains(&id) => communities.push(id),
+                Some(_) => {}
+                None => invalid_community = true,
+            }
+        }
+    }
+    if invalid_community {
+        // Do not silently shrink an any-of policy when only some listed IDs
+        // parse. An enabled gate with no communities is denied by the core.
+        communities.clear();
+    }
+
+    let whitelist_enabled = labels
+        .get("infrarust.whitelistThroughDiscord")
+        .is_some_and(|value| match value.trim() {
+            "true" => true,
+            "false" => false,
+            invalid => {
+                // A malformed gate value must not silently disable protection.
+                tracing::warn!(
+                    label = "infrarust.whitelistThroughDiscord",
+                    value = %invalid,
+                    "invalid Discord whitelist label; keeping the gate enabled"
+                );
+                true
+            }
+        });
+    (communities, whitelist_enabled)
+}
+
+fn insert_discord_settings(table: &mut Table, communities: &[String], whitelist_enabled: bool) {
+    table.insert(
+        "discord_communities".into(),
+        Value::Array(communities.iter().cloned().map(Value::String).collect()),
+    );
+    table.insert(
+        "whitelist_through_discord".into(),
+        Value::Boolean(whitelist_enabled),
+    );
+}
+
+fn parse_discord_guild_id(key: &str, raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    let id = raw
+        .bytes()
+        .all(|byte| byte.is_ascii_digit())
+        .then(|| raw.parse::<u64>().ok())
+        .flatten()
+        .filter(|id| *id != 0);
+
+    match id {
+        Some(id) => Some(id.to_string()),
+        None => {
+            tracing::warn!(label = %key, value = %raw, "ignoring invalid Discord guild ID label");
+            None
+        }
+    }
 }
 
 /// Adds the swarm-only keys to `table`. Each key is validated on its own so a

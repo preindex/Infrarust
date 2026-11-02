@@ -4,6 +4,7 @@
 //! configuration providers (file, docker), server routing, status handling, authentication,
 //! ban management, and the event bus system.
 
+pub mod admission;
 pub mod auth;
 pub mod ban;
 pub mod commands;
@@ -16,6 +17,7 @@ pub mod handler;
 pub mod handoff;
 pub(crate) mod limbo;
 pub mod loadbalancer;
+pub mod log_stream;
 pub mod middleware;
 pub mod permissions;
 pub mod pipeline;

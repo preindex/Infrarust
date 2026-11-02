@@ -5,6 +5,7 @@ use crate::permissions::Capability;
 pub enum ProviderKind {
     Ban,
     Permission,
+    AdmissionGuard,
 }
 
 impl ProviderKind {
@@ -12,6 +13,7 @@ impl ProviderKind {
         match self {
             Self::Ban => Capability::BanProvider,
             Self::Permission => Capability::PermissionProvider,
+            Self::AdmissionGuard => Capability::AdmissionGuard,
         }
     }
 
@@ -19,6 +21,7 @@ impl ProviderKind {
         match self {
             Self::Ban => "ban",
             Self::Permission => "permissions",
+            Self::AdmissionGuard => "admission-guards",
         }
     }
 }
@@ -33,12 +36,17 @@ pub enum ProviderRejected {
         kind: ProviderKind,
         selected: String,
     },
+    /// The slot is fixed to one provider, and another one is already registered.
+    #[error("[{}] a provider is already registered", .kind.section())]
+    AlreadyRegistered { kind: ProviderKind },
 }
 
 impl ProviderRejected {
     pub const fn kind(&self) -> ProviderKind {
         match self {
-            Self::MissingCapability { kind } | Self::NotSelected { kind, .. } => *kind,
+            Self::MissingCapability { kind }
+            | Self::NotSelected { kind, .. }
+            | Self::AlreadyRegistered { kind } => *kind,
         }
     }
 }

@@ -25,12 +25,14 @@ name = "survival"
 network = "main"
 domains = ["survival.mc.example.com", "*.survival.example.com"]
 addresses = ["10.0.1.10:25565", "10.0.1.11:25565"]
-proxy_mode = "passthrough"
+proxy_mode = "client_only"
 send_proxy_protocol = false
 domain_rewrite = "none"
 max_players = 100
 disconnect_message = "Survival is down for maintenance."
 limbo_handlers = ["auth", "antibot"]
+admission_guards = ["discord"]
+admission_policies.discord = { communities = ["123456789012345678", "234567890123456789"] }
 
 [timeouts]
 connect = "3s"
@@ -102,7 +104,13 @@ Forwarding proxy modes (`passthrough`, `zero_copy`, `server_only`) require at le
 | `max_players` | integer | `0` | Maximum players allowed on this server. `0` means unlimited. |
 | `disconnect_message` | string | `"Server is currently unreachable. Please try again later."` | Message shown to players when the backend is unreachable. |
 | `limbo_handlers` | list of strings | `[]` | Registered handler names for the limbo handler chain, executed in order. |
+| `admission_guards` | list of plugin IDs | `[]` | Admission guard namespaces that must all approve before the player joins. A missing provider refuses the connection. |
+| `admission_policies` | table of plugin ID to JSON-compatible value | `{}` | Opaque plugin-owned policy payloads passed unchanged to each selected guard. |
+| `discord_communities` | list of decimal Discord guild IDs | `[]` | Deprecated alias for the Discord plugin's `admission_policies.discord.communities`. |
+| `whitelist_through_discord` | bool | `false` | Deprecated alias that adds `"discord"` to `admission_guards`; requires `client_only` and at least one legacy `discord_communities` ID. |
 | `bungeecord_channel` | bool | `false` | Let this server's plugins use the `BungeeCord` plugin messaging channel. Needs [`[plugin_messaging] bungeecord = true`](./global#plugin-messaging) and `offline` or `client_only`. |
+
+See [Discord Community Gate](../plugins/builtin/discord) for account linking, bot setup, and Docker label equivalents. Admission guards declare their own identity and proxy-mode requirements; all configured guards must allow, and a hold sends the player to the guard's limbo handler before policy is checked again.
 
 #### Proxy modes
 
@@ -295,6 +303,9 @@ Infrarust validates every server file at startup and on hot-reload. Invalid file
 - Forwarding modes (`passthrough`, `zero_copy`, `server_only`) require at least one domain.
 - Forwarding modes cannot set `network` (they don't support server switching).
 - Forwarding modes cannot set `bungeecord_channel` (the proxy does not read their backend's packets).
+- Admission policy values are opaque to core and validated by their owning plugin. Missing guards fail closed.
+- The deprecated `whitelist_through_discord` alias requires `proxy_mode = "client_only"` and at least one nonzero decimal Discord guild ID in `discord_communities`.
+- Every `discord_communities` entry must be a nonzero decimal integer that fits in an unsigned 64-bit value.
 - `name` and `network` must match `[a-z0-9_-]+` and be at most 64 characters.
 - Domain strings cannot be empty.
 - No two server files can share the same effective ID.

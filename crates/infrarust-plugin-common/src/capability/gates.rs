@@ -60,6 +60,11 @@ pub const GATES: &[(&str, &str, &[Capability])] = &[
         "register-ban-provider",
         &[Capability::BanProvider],
     ),
+    (
+        "providers",
+        "register-admission-guard",
+        &[Capability::AdmissionGuard],
+    ),
     ("providers", "*", &[Capability::PermissionProvider]),
     ("connection-claims", "*", &[Capability::ConnectionHandoff]),
 ];

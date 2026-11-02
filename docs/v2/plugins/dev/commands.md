@@ -122,6 +122,23 @@ Lookups ignore case and see built-ins and other plugins' commands. A label resol
 
 `CommandInfo::spec` is the registered `CommandSpec`, with the name lowercased and only the accepted aliases. `plugin_id` is `None` for built-ins, and `namespaced()` returns `Some("<plugin_id>:<name>")`, or `None` for built-ins.
 
+## Dispatching a command
+
+A plugin can dispatch a command already registered with the proxy through its own `CommandManager` handle:
+
+```rust
+let outcome = ctx
+    .command_manager()
+    .dispatch(source, "myplugin:inspect")
+    .await;
+```
+
+Dispatch uses normal label resolution and `CommandSpec::permission` checks, and returns `CommandDispatchOutcome::Executed`, `Denied`, or `Unknown`. The plugin must hold both the `command` and `command-dispatch` capabilities. `command` is part of the WASM baseline; `command-dispatch` is reserved for trusted native plugins and cannot be granted to WASM through configuration.
+
+For remote integrations, create a `CommandSource::remote(name, permissions, output)` and pass it to `dispatch`. Its thread-safe output callback receives each reply `Component`; capture only the bounded output your integration intends to return. Remote sources inherit neither player nor console permissions, and dispatch denies them commands without an explicit `CommandSpec::permission` node even if their checker returns true. Supply a checker that grants only the explicitly permitted nodes.
+
+The calling plugin must enforce its own configured user, role, and channel allowlist **and** command allowlist before dispatching. The capability gate and permission nodes do not replace those integration-specific checks.
+
 ## CommandHandler
 
 Implement `CommandHandler` on a struct. `execute` receives a `CommandContext` and returns a `BoxFuture`; wrap your async block with `Box::pin(async move { ... })`.
@@ -155,6 +172,7 @@ A player's command runs on that player's command queue, not in the session: the 
 pub enum CommandSource {
     Player(Arc<dyn Player>),
     Console(Arc<dyn PermissionChecker>),
+    Remote(RemoteCommandSource),
 }
 ```
 
@@ -162,12 +180,15 @@ The enum is `#[non_exhaustive]`, so add a wildcard arm when you match on it. Mos
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `name()` | `&str` | The player's username, or `"Console"` |
-| `send_message(component)` | `()` | Chat message to the player; for the console, an `info` log line under the `infrarust::console` target |
-| `has_permission(node)` | `bool` | Whether the player or the console holds the node, see [Permission nodes](#permission-nodes) |
-| `player()` | `Option<&Arc<dyn Player>>` | The player, or `None` for the console |
+| `name()` | `&str` | The player's username, `"Console"`, or the remote source's name |
+| `send_message(component)` | `()` | Chat message to the player, console log line, or remote output callback |
+| `has_permission(node)` | `bool` | Whether the source's checker grants the node, see [Permission nodes](#permission-nodes) |
+| `player()` | `Option<&Arc<dyn Player>>` | The player, or `None` for console and remote sources |
 | `player_id()` | `Option<PlayerId>` | The player's id |
 | `is_console()` | `bool` | Whether the console ran the command |
+| `is_remote()` | `bool` | Whether a remote integration ran the command |
+
+`CommandSource::remote` requires an explicit `PermissionChecker`; it never grants permissions implicitly and does not authorize dispatch by itself. Remote dispatch requires the caller's `command` and `command-dispatch` capabilities, an explicit command permission node, and a positive checker result. Its callback is `Send + Sync` and may be called by the command handler. The caller must bound collected output and enforce integration-specific access controls before dispatch.
 
 ## CommandContext
 

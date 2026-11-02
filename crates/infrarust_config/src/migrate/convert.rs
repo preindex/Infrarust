@@ -194,6 +194,10 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
         ip_filter,
         disconnect_message: None,
         limbo_handlers: Vec::new(),
+        admission_policies: Default::default(),
+        admission_guards: Vec::new(),
+        discord_communities: Vec::new(),
+        whitelist_through_discord: false,
         bungeecord_channel: false,
     };
 

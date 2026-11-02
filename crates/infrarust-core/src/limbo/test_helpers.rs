@@ -87,6 +87,7 @@ pub fn test_proxy_services() -> ProxyServices {
     ));
 
     ProxyServices {
+        admission_service: Arc::new(crate::admission::AdmissionService::default()),
         event_bus: Arc::new(EventBusImpl::new()),
         player_registry: Arc::new(PlayerRegistryImpl::new(Arc::clone(&connection_registry))),
         command_manager: Arc::new(CommandManagerImpl::new()),

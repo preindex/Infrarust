@@ -9,10 +9,18 @@ use crate::types::{Component, PlayerId};
 pub const CONSOLE_NAME: &str = "Console";
 
 #[derive(Clone)]
+pub struct RemoteCommandSource {
+    name: String,
+    permissions: Arc<dyn PermissionChecker>,
+    output: Arc<dyn Fn(Component) + Send + Sync>,
+}
+
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum CommandSource {
     Player(Arc<dyn Player>),
     Console(Arc<dyn PermissionChecker>),
+    Remote(RemoteCommandSource),
 }
 
 impl std::fmt::Debug for CommandSource {
@@ -23,6 +31,7 @@ impl std::fmt::Debug for CommandSource {
                 .field(&player.profile().username)
                 .finish(),
             Self::Console(_) => f.write_str("Console"),
+            Self::Remote(source) => f.debug_tuple("Remote").field(&source.name).finish(),
         }
     }
 }
@@ -32,10 +41,27 @@ impl CommandSource {
         Self::Console(permissions)
     }
 
+    /// Creates a remote source with explicitly supplied permissions and a thread-safe reply sink.
+    ///
+    /// A remote source does not inherit player or console permissions. Dispatching it still
+    /// requires the calling plugin's `command` and `command-dispatch` capabilities.
+    pub fn remote(
+        name: impl Into<String>,
+        permissions: Arc<dyn PermissionChecker>,
+        output: impl Fn(Component) + Send + Sync + 'static,
+    ) -> Self {
+        Self::Remote(RemoteCommandSource {
+            name: name.into(),
+            permissions,
+            output: Arc::new(output),
+        })
+    }
+
     pub fn name(&self) -> &str {
         match self {
             Self::Player(player) => &player.profile().username,
             Self::Console(_) => CONSOLE_NAME,
+            Self::Remote(source) => &source.name,
         }
     }
 
@@ -52,6 +78,7 @@ impl CommandSource {
             Self::Console(_) => {
                 tracing::info!(target: "infrarust::console", "{}", message.to_plain());
             }
+            Self::Remote(source) => (source.output)(message),
         }
     }
 
@@ -59,13 +86,14 @@ impl CommandSource {
         match self {
             Self::Player(player) => player.has_permission(node),
             Self::Console(permissions) => permissions.has_permission(node),
+            Self::Remote(source) => source.permissions.has_permission(node),
         }
     }
 
     pub fn player(&self) -> Option<&Arc<dyn Player>> {
         match self {
             Self::Player(player) => Some(player),
-            Self::Console(_) => None,
+            Self::Console(_) | Self::Remote(_) => None,
         }
     }
 
@@ -75,6 +103,10 @@ impl CommandSource {
 
     pub const fn is_console(&self) -> bool {
         matches!(self, Self::Console(_))
+    }
+
+    pub const fn is_remote(&self) -> bool {
+        matches!(self, Self::Remote(_))
     }
 }
 
@@ -327,6 +359,14 @@ pub enum CommandError {
     NotOwned(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CommandDispatchOutcome {
+    Executed,
+    Denied,
+    Unknown,
+}
+
 impl CommandError {
     /// The [`ErrorKind`] a WASM guest receives for this error.
     pub const fn kind(&self) -> ErrorKind {
@@ -343,6 +383,16 @@ pub mod private {
 }
 
 pub trait CommandManager: Send + Sync + private::Sealed {
+    /// Dispatches a command through the proxy's normal lookup and permission checks.
+    ///
+    /// The calling plugin must hold both `Capability::Command` and
+    /// `Capability::CommandDispatch`.
+    fn dispatch<'a>(
+        &'a self,
+        source: CommandSource,
+        input: &'a str,
+    ) -> BoxFuture<'a, CommandDispatchOutcome>;
+
     fn register(
         &self,
         spec: CommandSpec,

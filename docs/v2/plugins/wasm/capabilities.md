@@ -68,6 +68,7 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `PermissionProvider` | `permission-provider` | Become the permission provider named by `[permissions] provider`, and replace or clear a player's permission snapshot (`providers.register-permission-provider`, `permissions.*`, see [Permissions](./permissions)) | No |
 | `FilesystemExtended` | `filesystem-extended` | Mount the host folders listed in `[[plugins.<id>.wasm.mounts]]`, see [Network & Extra Folders](./network) | No |
 | `Network` | `network` | TCP, UDP, name lookups and HTTP, limited to the addresses in `[plugins.<id>.wasm.network] allow`, see [Network & Extra Folders](./network) | No |
+| `LogRead` | `log-read` | Subscribe to the live proxy log stream (`PluginContext::log_service`). Native plugins only, granted explicitly, never to WASM | No |
 
 ::: warning transport-filter is host-only
 `transport-filter` is a valid capability string, but `from_config_strings` puts it in the rejected list rather than granting it. A WASM plugin cannot register transport filters. The capability exists for native plugins, which receive it through `native_trusted`.

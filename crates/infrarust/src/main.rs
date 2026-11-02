@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
 use infrarust_config::{DockerMode, ProxyConfig};
+use infrarust_core::log_stream::LogStream;
 use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
 use infrarust_core::services::config_service::ConfigServiceImpl;
 use infrarust_core::telemetry::formatter::InfrarustFormatter;
@@ -113,10 +114,12 @@ fn main() -> ExitCode {
         .as_ref()
         .is_some_and(|w| w.enable_api)
         .then(|| LogBroadcast::new(512, 1000));
+    let log_stream = LogStream::new();
     let _tracing_guard = init_tracing(
         &cli.log_level,
         &config,
         log_broadcast.as_ref().map(LogBroadcast::layer),
+        &log_stream,
     );
 
     startup_banner(&config).print();
@@ -145,7 +148,12 @@ fn main() -> ExitCode {
         }
     };
 
-    match runtime.block_on(run(config, cli.config, log_broadcast)) {
+    match runtime.block_on(run(
+        config,
+        cli.config,
+        log_broadcast,
+        Arc::clone(&log_stream),
+    )) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!("{e:#}");
@@ -163,6 +171,7 @@ fn init_tracing(
     log_level: &str,
     #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))] config: &ProxyConfig,
     log_layer: Option<BroadcastLogLayer>,
+    log_stream: &Arc<LogStream>,
 ) -> TracingGuard {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -180,7 +189,7 @@ fn init_tracing(
         tracing_opentelemetry::layer().with_tracer(opentelemetry::global::tracer("infrarust"))
     }));
 
-    registry.with(log_layer).init();
+    registry.with(log_layer).with(log_stream.layer()).init();
 
     TracingGuard {
         #[cfg(feature = "telemetry")]
@@ -269,6 +278,7 @@ async fn run(
     config: ProxyConfig,
     config_path: std::path::PathBuf,
     log_broadcast: Option<LogBroadcast>,
+    log_stream: Arc<LogStream>,
 ) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
 
@@ -294,6 +304,7 @@ async fn run(
         .shutdown_token(shutdown.clone())
         .proxy_info(proxy_info)
         .trusted_plugins(static_ids)
+        .log_stream(log_stream)
         .loader(Box::new(static_loader));
 
     #[cfg(feature = "wasm")]

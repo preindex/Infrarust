@@ -65,6 +65,41 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<ConfigWarnings, C
         return Err(server_error(&id, ServerValidationError::FullModeReserved));
     }
 
+    if config.whitelist_through_discord || !config.discord_communities.is_empty() {
+        tracing::warn!(
+            server = %id,
+            "discord_communities and whitelist_through_discord are deprecated; use admission_policies and admission_guards"
+        );
+    }
+    if config.whitelist_through_discord {
+        if config.proxy_mode != crate::types::ProxyMode::ClientOnly {
+            return Err(server_error(
+                &id,
+                ServerValidationError::DiscordGateRequiresClientOnly {
+                    proxy_mode: config.proxy_mode,
+                },
+            ));
+        }
+        if config.discord_communities.is_empty() {
+            return Err(server_error(
+                &id,
+                ServerValidationError::DiscordGateRequiresCommunity,
+            ));
+        }
+    }
+    for community in &config.discord_communities {
+        if !community.bytes().all(|byte| byte.is_ascii_digit())
+            || !matches!(community.parse::<u64>(), Ok(id) if id != 0)
+        {
+            return Err(server_error(
+                &id,
+                ServerValidationError::InvalidDiscordCommunityId {
+                    value: community.clone(),
+                },
+            ));
+        }
+    }
+
     if config.proxy_mode.is_forwarding() {
         if config.domains.is_empty() {
             return Err(ConfigError::NoDomains {
@@ -117,7 +152,6 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<ConfigWarnings, C
         ));
     }
 
-    #[allow(unused_mut)]
     let mut warnings = balance_warnings(config);
 
     #[cfg(not(target_os = "linux"))]

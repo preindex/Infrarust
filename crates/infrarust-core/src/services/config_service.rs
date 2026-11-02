@@ -84,6 +84,8 @@ impl ConfigServiceImpl {
             .domains(config.domains.clone())
             .proxy_mode(convert_proxy_mode(config.proxy_mode))
             .limbo_handlers(config.limbo_handlers.clone())
+            .admission_guards(config.configured_admission_guards())
+            .admission_policy_map(config.effective_admission_policies())
             .max_players(config.max_players)
             .disconnect_message(config.disconnect_message.clone())
             .send_proxy_protocol(config.send_proxy_protocol)

@@ -105,6 +105,21 @@ pub(crate) async fn run_handler_chain(
                     tracing::warn!(error = %e, "failed to send limbo spawn sequence");
                     return LimboChainResult::Kick(Component::text("Internal error"));
                 }
+                if needs_join_game
+                    && !spawn_sent
+                    && matches!(
+                        &chain_result,
+                        LimboChainResult::Switch(_) | LimboChainResult::SendToLimbo(_)
+                    )
+                {
+                    spawn_sent = true;
+                }
+                if spawn_sent
+                    && let Err(error) = flush_outgoing(&mut io.client, &mut limbo.core).await
+                {
+                    tracing::debug!(%error, "client disconnected while flushing limbo handler output");
+                    return LimboChainResult::ClientDisconnected;
+                }
                 return chain_result;
             }
             HandlerAction::Hold(timeout) => {
@@ -131,16 +146,35 @@ pub(crate) async fn run_handler_chain(
         }
     }
 
-    if needs_join_game
-        && !spawn_sent
-        && let Err(e) =
+    if needs_join_game && !spawn_sent {
+        if let Err(e) =
             send_spawn_sequence(&mut io.client, ctx.version(), ctx.registry(), true).await
-    {
-        tracing::warn!(error = %e, "failed to send limbo spawn sequence");
-        return LimboChainResult::Kick(Component::text("Internal error"));
+        {
+            tracing::warn!(error = %e, "failed to send limbo spawn sequence");
+            return LimboChainResult::Kick(Component::text("Internal error"));
+        }
+        spawn_sent = true;
+    }
+
+    if spawn_sent && let Err(error) = flush_outgoing(&mut io.client, &mut limbo.core).await {
+        tracing::debug!(%error, "client disconnected while flushing limbo handler output");
+        return LimboChainResult::ClientDisconnected;
     }
 
     LimboChainResult::Completed
+}
+
+/// Writes handler packets queued before the handler returned. In particular,
+/// an immediately accepted handler may enqueue a title before the limbo spawn
+/// sequence; write it only after the client has entered the play state.
+async fn flush_outgoing(
+    client: &mut ClientBridge,
+    core: &mut VirtualSessionCore,
+) -> Result<(), CoreError> {
+    while let Ok(frame) = core.outgoing_rx.try_recv() {
+        client.write_frame(&frame).await?;
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -285,6 +319,13 @@ async fn wait_for_hold(
     }
 
     loop {
+        // A handler can queue a final title and complete its hold in the same
+        // turn. Drain first so the completion channel cannot win the early
+        // try_recv below and discard that queued player feedback.
+        if let Err(error) = flush_outgoing(client, core).await {
+            tracing::debug!(%error, "client disconnected while flushing limbo handler output");
+            return ControlFlow::Break(LimboChainResult::ClientDisconnected);
+        }
         if in_flight.is_none() {
             match complete.try_recv() {
                 Ok(outcome) => return process_outcome(outcome),

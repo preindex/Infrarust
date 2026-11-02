@@ -1,5 +1,6 @@
 //! Backend server configuration (one per `.toml` file in `servers_dir`).
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -101,11 +102,65 @@ pub struct ServerConfig {
     #[serde(default)]
     pub limbo_handlers: Vec<String>,
 
+    /// Namespaced admission guard configuration.
+    #[serde(default)]
+    pub admission_policies: HashMap<String, serde_json::Value>,
+
+    /// Namespaces of admission guards required before joining this server.
+    #[serde(default)]
+    pub admission_guards: Vec<String>,
+
+    /// Deprecated compatibility alias; mapped to the `discord` admission policy.
+    #[serde(default)]
+    pub discord_communities: Vec<String>,
+
+    /// Deprecated compatibility alias; mapped to the `discord` admission guard.
+    #[serde(default)]
+    pub whitelist_through_discord: bool,
+
     #[serde(default)]
     pub bungeecord_channel: bool,
 }
 
 impl ServerConfig {
+    /// Returns configured guards, including the deprecated Discord alias.
+    pub fn configured_admission_guards(&self) -> Vec<String> {
+        let mut guards = self.admission_guards.clone();
+        if self.whitelist_through_discord && !guards.iter().any(|guard| guard == "discord") {
+            guards.push("discord".to_owned());
+        }
+        guards
+    }
+
+    /// Returns one namespace's policy, mapping the deprecated Discord field.
+    pub fn admission_policy(&self, namespace: &str) -> serde_json::Value {
+        let mut policy = self
+            .admission_policies
+            .get(namespace)
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        if namespace == "discord" && !self.discord_communities.is_empty() {
+            if !policy.is_object() {
+                policy = serde_json::json!({});
+            }
+            if let Some(object) = policy.as_object_mut() {
+                object
+                    .entry("communities")
+                    .or_insert_with(|| serde_json::json!(self.discord_communities));
+            }
+        }
+        policy
+    }
+
+    /// Returns every effective policy, including configured legacy aliases.
+    pub fn effective_admission_policies(&self) -> HashMap<String, serde_json::Value> {
+        let mut policies = self.admission_policies.clone();
+        if self.whitelist_through_discord || !self.discord_communities.is_empty() {
+            policies.insert("discord".to_owned(), self.admission_policy("discord"));
+        }
+        policies
+    }
+
     /// Returns the effective identifier for this config.
     ///
     /// Priority: `name` > `id` > `"unknown"`.

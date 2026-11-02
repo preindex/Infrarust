@@ -21,6 +21,7 @@ use infrarust_server_manager::{LifecyclePolicy, ServerProvider};
 use infrarust_transport::Listener;
 
 use crate::error::CoreError;
+use crate::log_stream::LogStream;
 use crate::plugin::manager::{PluginManager, PluginServices, ShutdownLimits};
 use crate::plugin::{
     PluginContextFactoryImpl, PluginLoader, PluginManagerError, PluginPermissions,
@@ -47,6 +48,7 @@ impl ProxyRuntime {
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
             plugin_shutdown: ShutdownLimits::default(),
             server_providers: Vec::new(),
+            log_stream: None,
         }
     }
 }
@@ -68,9 +70,17 @@ pub struct ProxyRuntimeBuilder {
     drain_timeout: Duration,
     plugin_shutdown: ShutdownLimits,
     server_providers: Vec<ProviderOverride>,
+    log_stream: Option<Arc<LogStream>>,
 }
 
 impl ProxyRuntimeBuilder {
+    /// Connects the stream the binary installed on the process tracing subscriber.
+    #[must_use]
+    pub fn log_stream(mut self, stream: Arc<LogStream>) -> Self {
+        self.log_stream = Some(stream);
+        self
+    }
+
     #[must_use]
     pub fn shutdown_token(mut self, token: CancellationToken) -> Self {
         self.shutdown = token;
@@ -141,6 +151,7 @@ impl ProxyRuntimeBuilder {
             drain_timeout,
             plugin_shutdown,
             server_providers,
+            log_stream,
         } = self;
 
         let proxy_info = proxy_info
@@ -191,8 +202,10 @@ impl ProxyRuntimeBuilder {
                 plugin_permissions(plugin_cfgs, trusted),
             )
             .with_ban_manager(Arc::clone(&services.ban_manager))
+            .with_admission_service(Arc::clone(&services.admission_service))
             .with_permissions(Arc::clone(&services.permission_service))
             .with_limbo_handlers(Arc::clone(&services.limbo_handler_registry))
+            .with_log_stream(log_stream)
             .with_messaging(
                 Arc::clone(&services.plugin_messaging),
                 Arc::clone(&services.connection_registry),
@@ -210,6 +223,9 @@ impl ProxyRuntimeBuilder {
 
         provider_activator.start();
         plugin_manager.activate_config_providers().await;
+        services
+            .admission_service
+            .report_missing(&services.domain_router);
 
         let plugin_manager = Arc::new(RwLock::new(plugin_manager));
         let server = Arc::new(server);

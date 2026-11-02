@@ -18,6 +18,8 @@ use infrarust_api::permissions::{
 };
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::provider::PluginConfigProvider;
+use infrarust_api::services::admission_guard::AdmissionGuard;
+use infrarust_api::services::log_service::LogService;
 use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::services::proxy_info::ProxyInfo;
 use infrarust_api::services::scheduler::Scheduler;
@@ -31,9 +33,11 @@ use infrarust_api::services::{
     server_manager::ServerManager,
 };
 
+use crate::admission::{AdmissionRegistration, AdmissionService};
 use crate::ban::BanManager;
 use crate::handoff::PluginConnectionClaims;
 use crate::limbo::registry::LimboHandlerRegistry;
+use crate::log_stream::LogStream;
 use crate::permissions::PermissionService;
 use crate::plugin_messaging::PluginChannels;
 use crate::provider::plugin_adapter::PluginProviderActivator;
@@ -52,10 +56,12 @@ const UNUSABLE_DATA_DIR: &str = ".invalid-plugin-id";
 
 pub struct HostRegistries {
     pub ban_manager: Option<Arc<BanManager>>,
+    pub admission_service: Arc<AdmissionService>,
     pub permissions: Arc<PermissionService>,
     pub limbo_handlers: Arc<LimboHandlerRegistry>,
     pub services: Arc<ServiceRegistryImpl>,
     pub channels: PluginChannels,
+    pub log_stream: Option<Arc<LogStream>>,
 }
 
 pub struct PluginContextImpl {
@@ -65,6 +71,8 @@ pub struct PluginContextImpl {
     ban_service: Arc<dyn BanService>,
     ban_manager: Option<Arc<BanManager>>,
     registered_ban_provider: AtomicBool,
+    admission_service: Arc<AdmissionService>,
+    admission_registration: Mutex<Option<AdmissionRegistration>>,
     permissions: Arc<PermissionService>,
     registered_permission_provider: AtomicBool,
     config_service: Arc<dyn ConfigService>,
@@ -85,6 +93,7 @@ pub struct PluginContextImpl {
     plugins_dir: PathBuf,
     capabilities: CapabilitySet,
     channels: PluginChannels,
+    log_service: Option<Arc<dyn LogService>>,
 }
 
 impl PluginContextImpl {
@@ -101,6 +110,7 @@ impl PluginContextImpl {
         let command_manager = Arc::new(TrackingCommandManager::new(
             Arc::clone(&host.command_manager),
             plugin_id.to_owned(),
+            capabilities.clone(),
         ));
         let scheduler = Arc::new(TrackingScheduler::new(
             Arc::clone(&host.scheduler),
@@ -120,6 +130,14 @@ impl PluginContextImpl {
             plugin_id,
         ));
 
+        let log_service: Option<Arc<dyn LogService>> = if capabilities.has(Capability::LogRead) {
+            registries
+                .log_stream
+                .map(|stream| stream as Arc<dyn LogService>)
+        } else {
+            None
+        };
+
         let config_service: Arc<dyn ConfigService> = if capabilities.has(Capability::ConfigWrite) {
             Arc::clone(&host.config_service)
         } else {
@@ -133,6 +151,8 @@ impl PluginContextImpl {
             ban_service,
             ban_manager: registries.ban_manager,
             registered_ban_provider: AtomicBool::new(false),
+            admission_service: registries.admission_service,
+            admission_registration: Mutex::new(None),
             permissions: registries.permissions,
             registered_permission_provider: AtomicBool::new(false),
             config_service,
@@ -153,6 +173,7 @@ impl PluginContextImpl {
             plugins_dir: host.plugins_dir.clone(),
             capabilities,
             channels: registries.channels,
+            log_service,
         }
     }
 
@@ -200,6 +221,8 @@ impl PluginContextImpl {
             ban_service: _,
             ban_manager,
             registered_ban_provider,
+            admission_service,
+            admission_registration,
             permissions,
             registered_permission_provider,
             config_service: _,
@@ -220,6 +243,7 @@ impl PluginContextImpl {
             plugins_dir: _,
             capabilities: _,
             channels,
+            log_service: _,
         } = self;
 
         event_bus.unsubscribe_all();
@@ -238,6 +262,10 @@ impl PluginContextImpl {
             && let Some(bans) = ban_manager
         {
             bans.unregister_provider(plugin_id);
+        }
+
+        if let Some(registration) = lock(admission_registration).take() {
+            admission_service.unregister(plugin_id, registration);
         }
 
         if registered_permission_provider.swap(false, Ordering::SeqCst)
@@ -292,6 +320,24 @@ impl PluginContext for PluginContextImpl {
         };
         bans.register_provider(&self.plugin_id, provider)?;
         self.registered_ban_provider.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn register_admission_guard(
+        &self,
+        guard: Arc<dyn AdmissionGuard>,
+    ) -> Result<(), ProviderRejected> {
+        if !self.capabilities.has(Capability::AdmissionGuard) {
+            tracing::warn!(
+                plugin = %self.plugin_id,
+                "register_admission_guard denied: missing admission-guard capability"
+            );
+            return Err(ProviderRejected::MissingCapability {
+                kind: ProviderKind::AdmissionGuard,
+            });
+        }
+        let registration = self.admission_service.register(&self.plugin_id, guard)?;
+        *lock(&self.admission_registration) = Some(registration);
         Ok(())
     }
 
@@ -399,6 +445,10 @@ impl PluginContext for PluginContextImpl {
         } else {
             None
         }
+    }
+
+    fn log_service(&self) -> Option<Arc<dyn LogService>> {
+        self.log_service.clone()
     }
 
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry> {

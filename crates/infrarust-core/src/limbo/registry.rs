@@ -214,6 +214,22 @@ impl LimboHandlerRegistry {
             .map(|entry| Arc::clone(&entry.handler) as Arc<dyn LimboHandler>)
     }
 
+    /// Resolves a handler only when it belongs to the expected plugin. The
+    /// owner check and handler clone share one registry read lock, so a handler
+    /// cannot be swapped between those steps.
+    pub fn get_owned(&self, name: &str, owner: &str) -> Result<Arc<dyn LimboHandler>, CoreError> {
+        let entries = read(&self.entries);
+        let entry = entries
+            .get(name)
+            .ok_or_else(|| CoreError::UnknownLimboHandler(name.to_owned()))?;
+        if &*entry.owner != owner {
+            return Err(CoreError::Rejected(format!(
+                "limbo handler `{name}` is not owned by `{owner}`"
+            )));
+        }
+        Ok(Arc::clone(&entry.handler) as Arc<dyn LimboHandler>)
+    }
+
     pub fn owner_of(&self, name: &str) -> Option<String> {
         read(&self.entries)
             .get(name)

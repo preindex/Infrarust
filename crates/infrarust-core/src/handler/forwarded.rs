@@ -262,6 +262,45 @@ impl ForwardedLogin<'_> {
                 }
             };
 
+            let admission = match self
+                .services
+                .admission_service
+                .authorize(
+                    &admitted.session,
+                    &server,
+                    &route.routing.server_config,
+                    &self.services.domain_router,
+                    &admitted.token,
+                    infrarust_api::services::AdmissionStage::ForwardedConnection,
+                )
+                .await
+            {
+                Ok(crate::admission::Authorization::Admitted(admission)) => admission,
+                Ok(crate::admission::Authorization::Hold { .. }) => {
+                    let reason = Component::text(
+                        "Admission verification requires an interactive login session.",
+                    );
+                    self.kick(ctx, &reason).await;
+                    admitted
+                        .lifecycle
+                        .end(DisconnectCause::Kicked {
+                            reason: Some(reason),
+                        })
+                        .await;
+                    return Ok(None);
+                }
+                Err(reason) => {
+                    self.kick(ctx, &reason).await;
+                    admitted
+                        .lifecycle
+                        .end(DisconnectCause::Kicked {
+                            reason: Some(reason),
+                        })
+                        .await;
+                    return Ok(None);
+                }
+            };
+
             let woken = wake(self.services, &route.routing.server_config, &admitted.token).await;
             if let Some(ended) = self.interrupted(ctx, &mut admitted).await {
                 admitted.lifecycle.end(ended).await;
@@ -271,6 +310,22 @@ impl ForwardedLogin<'_> {
                 Ok(warmed) => {
                     if warmed {
                         route.addresses = self.select(ctx, &route.routing);
+                    }
+                    // This is the admission commit point: no asynchronous
+                    // work occurs before the backend connection is started.
+                    if let Err(reason) = self
+                        .services
+                        .admission_service
+                        .confirm(&admission, &self.services.domain_router)
+                    {
+                        self.kick(ctx, &reason).await;
+                        admitted
+                            .lifecycle
+                            .end(DisconnectCause::Kicked {
+                                reason: Some(reason),
+                            })
+                            .await;
+                        return Ok(None);
                     }
                     match self.open_backend(ctx, &admitted, &route, opening).await {
                         Ok(backend) => {

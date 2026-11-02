@@ -144,6 +144,15 @@ pub enum ServerValidationError {
     #[error("slow_start_aggression must be a finite number > 0 (got {value})")]
     SlowStartAggression { value: f64 },
 
+    #[error("whitelist_through_discord requires proxy_mode = \"client_only\" (got {proxy_mode:?})")]
+    DiscordGateRequiresClientOnly { proxy_mode: ProxyMode },
+
+    #[error("whitelist_through_discord requires at least one Discord community ID")]
+    DiscordGateRequiresCommunity,
+
+    #[error("invalid Discord community ID '{value}': expected a nonzero decimal snowflake")]
+    InvalidDiscordCommunityId { value: String },
+
     #[error("{field} must not be empty")]
     EmptyIdentifier { field: &'static str },
 

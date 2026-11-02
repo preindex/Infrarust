@@ -547,7 +547,13 @@ Each file in the `servers_dir` directory defines one backend server. The filenam
 | `max_players` | integer | `0` | Maximum players on this server. 0 = unlimited |
 | `disconnect_message` | string | `"Server is currently unreachable. Please try again later."` | Message sent to the player when the backend is unreachable |
 | `limbo_handlers` | array of strings | `[]` | Plugin IDs for limbo handler chain, executed in order |
+| `admission_guards` | array of plugin IDs | `[]` | Namespaced admission guards that must all approve before joining |
+| `admission_policies` | table of plugin ID to JSON-compatible value | `{}` | Opaque policy payloads passed to the matching admission guard |
+| `discord_communities` | array of decimal Discord guild IDs | `[]` | Deprecated alias for `admission_policies.discord.communities` |
+| `whitelist_through_discord` | boolean | `false` | Deprecated alias for requiring the `discord` admission guard |
 | `bungeecord_channel` | boolean | `false` | Answer this server's BungeeCord channel requests when `[plugin_messaging] bungeecord` is on. Only for `offline` and `client_only` |
+
+See [Discord Community Gate](../plugins/builtin/discord) for bot setup, account linking, and Docker label equivalents.
 
 Minimal example:
 
@@ -569,6 +575,8 @@ domain_rewrite = "none"
 max_players = 100
 disconnect_message = "§cServer is offline. Try again later."
 limbo_handlers = ["server_wake"]
+admission_guards = ["discord"]
+admission_policies.discord = { communities = ["123456789012345678", "234567890123456789"] }
 ```
 
 ### Proxy modes

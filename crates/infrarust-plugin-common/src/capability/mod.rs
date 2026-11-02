@@ -32,6 +32,7 @@ capabilities! {
     ServerManage => "server-manage",
     Ban => "ban",
     Command => "command",
+    CommandDispatch => "command-dispatch",
     Scheduler => "scheduler",
     ConfigRead => "config-read",
     ConfigWrite => "config-write",
@@ -46,6 +47,8 @@ capabilities! {
     BanProvider => "ban-provider",
     PluginMessaging => "plugin-messaging",
     ConnectionHandoff => "connection-handoff",
+    AdmissionGuard => "admission-guard",
+    LogRead => "log-read",
 }
 
 impl Capability {
@@ -112,7 +115,7 @@ mod tests {
             assert_eq!(name.parse::<Capability>(), Ok(capability));
             assert_eq!(capability.to_string(), name);
         }
-        assert_eq!(Capability::ALL.len(), 21);
+        assert_eq!(Capability::ALL.len(), 24);
         assert_eq!(names.len(), Capability::ALL.len());
     }
 
