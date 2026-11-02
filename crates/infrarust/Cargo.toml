@@ -25,11 +25,12 @@ path = "src/main.rs"
 default = ["default-plugins", "libdeflater", "wasm"]
 telemetry = ["infrarust-core/telemetry", "dep:opentelemetry", "dep:tracing-opentelemetry"]
 docker = ["infrarust-core/docker"]
-default-plugins = ["plugin-auth", "plugin-server-wake"]
+default-plugins = ["plugin-auth", "plugin-server-wake", "plugin-discord"]
 libdeflater = ["infrarust-core/libdeflater"]
 plugin-auth = ["dep:infrarust-plugin-auth"]
 plugin-hello = ["dep:infrarust-plugin-hello"]
 plugin-server-wake = ["dep:infrarust-plugin-server-wake"]
+plugin-discord = ["dep:infrarust-plugin-discord"]
 # SVC is opt-in; standalone builds must pass `--features plugin-svc`.
 plugin-svc = ["dep:infrarust-plugin-svc"]
 wasm = ["dep:infrarust-loader-wasm"]
@@ -56,6 +57,7 @@ infrarust-transport = { workspace = true }
 infrarust-plugin-auth = { workspace = true, optional = true }
 infrarust-plugin-hello = { workspace = true, optional = true }
 infrarust-plugin-server-wake = { workspace = true, optional = true }
+infrarust-plugin-discord = { workspace = true, optional = true }
 infrarust-plugin-svc = { workspace = true, optional = true }
 infrarust-plugin-admin-api = { workspace = true }
 

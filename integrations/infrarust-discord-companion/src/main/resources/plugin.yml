@@ -1,0 +1,6 @@
+name: InfrarustDiscordCompanion
+version: 0.1.0
+main: dev.infrarust.discordcompanion.DiscordCompanionPlugin
+api-version: '1.21'
+description: Optional authenticated event relay to an Infrarust proxy.
+softdepend: [LuckPerms]

@@ -1,0 +1,35 @@
+[package]
+name = "infrarust-plugin-discord"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Native Discord bot and community gate for the Infrarust proxy"
+keywords = ["minecraft", "proxy", "plugin", "discord"]
+categories = ["game-development", "authentication"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
+
+[dependencies]
+infrarust-api = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+hmac = "0.13.0"
+twilight-gateway = "0.17.1"
+twilight-http = "0.17.1"
+twilight-model = "0.17.1"

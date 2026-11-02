@@ -37,6 +37,15 @@ pub fn build_static_loader(
         });
     }
 
+    #[cfg(feature = "plugin-discord")]
+    {
+        use infrarust_api::plugin::Plugin;
+        let discord = infrarust_plugin_discord::DiscordPlugin::default();
+        loader.register(discord.metadata(), || {
+            Box::new(infrarust_plugin_discord::DiscordPlugin::default())
+        });
+    }
+
     #[cfg(feature = "plugin-svc")]
     {
         use infrarust_api::plugin::Plugin;

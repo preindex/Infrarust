@@ -31,18 +31,19 @@ Provide dynamic configuration. Plugins can register a config provider that suppl
 
 ## Built-in plugins
 
-Infrarust includes three built-in plugins:
+Infrarust includes these built-in plugins:
 
 | Plugin | Activation | Description |
 |--------|------------|-------------|
 | [Admin API & Web UI](./builtin/admin-api) | `[web]` section in `infrarust.toml`, with `enable_api` on | REST API and embedded web dashboard for monitoring, server and proxy configuration, and backend drain controls. |
 | [Auth](./builtin/auth) | `plugin-auth` feature flag (on by default), and `"auth"` in the `limbo_handlers` of a `client_only` or `offline` server | Password-based authentication with `/login` and `/register` commands. Holds players in limbo until authenticated. |
+| [Discord Community Gate](./builtin/discord) | `plugin-discord` feature flag (on by default), plus `admission_guards = ["discord"]` on a `client_only` server | Runs the Discord bot in the proxy, links Minecraft and Discord accounts, and gates backend access on membership in one or more Discord communities. |
 | [Server Wake](./builtin/server-wake) | `plugin-server-wake` feature flag (on by default), and `"server_wake"` in the `limbo_handlers` of a `client_only` or `offline` server | Holds players in limbo while a backend server starts up, showing status messages. |
 
 Built-in plugins are registered at compile time in `crates/infrarust/src/plugins.rs` using a `StaticPluginLoader`. To enable or disable them, toggle the corresponding Cargo feature when building:
 
 ```bash
-cargo build --release --features "plugin-auth,plugin-server-wake"
+cargo build --release --features "plugin-auth,plugin-server-wake,plugin-discord"
 ```
 
 ## Plugin lifecycle
@@ -57,6 +58,7 @@ cargo build --release --features "plugin-auth,plugin-server-wake"
 
 - [Admin API & Web UI](./builtin/admin-api): REST API and web dashboard for proxy management.
 - [Auth Plugin](./builtin/auth): Password authentication and limbo login screen.
+- [Discord Community Gate](./builtin/discord): Discord account linking and community-gated server access.
 - [Server Wake Plugin](./builtin/server-wake): Hold players while backend servers start.
 - [WASM Plugins](./wasm/): Build a sandboxed plugin loaded at runtime from a `.wasm` file.
 - [Developing native plugins](./dev/getting-started): Build a plugin compiled into the proxy binary.

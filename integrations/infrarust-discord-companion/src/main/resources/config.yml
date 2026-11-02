@@ -1,0 +1,27 @@
+# This backend companion is intentionally disabled until configured.
+enabled: false
+
+# Set this to the same 64-character hexadecimal secret configured on the proxy.
+# Generate with: openssl rand -hex 32
+shared-secret: ""
+
+events:
+  death: true
+  advancement: true
+  position: false
+
+# Position snapshots are emitted at most once per player each interval.
+# At most max-position-players are included in each snapshot cycle.
+position-interval-ticks: 40
+max-position-players: 128
+
+# Optional LuckPerms group sync. The proxy sends the groups each player should
+# hold, derived from their linked Discord roles. Requires enabled: true, the
+# shared-secret above, and LuckPerms. allowed-groups must match the proxy's
+# group_sync allowed_groups exactly. Only these groups are ever granted or removed,
+# and a group is removed only if this companion granted it.
+group-sync:
+  enabled: false
+  # Must match the `server` id this backend uses in the proxy's backend-events.toml.
+  server-id: ""
+  allowed-groups: []
