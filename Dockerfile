@@ -85,8 +85,8 @@ RUN apk add --no-cache bash \
     && chown -R 65532:65532 /app /opt/geyser
 
 ARG GEYSER_VERSION=2.12.1
-ARG GEYSER_BUILD=1273
-ARG GEYSER_SHA256=1de33d692bfa94e43729cd7a288627721b10acaf6b43ee6453759ca6d4de2d38
+ARG GEYSER_BUILD=1276
+ARG GEYSER_SHA256=1dd1de0d56ad5f50d31feff2e18f6f71de50bc142853131d473bfd71d9e3809f
 
 RUN apk add --no-cache curl \
     && curl -fsSL \

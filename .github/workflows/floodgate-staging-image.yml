@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - codex/floodgate-compat
+      - codex/floodgate-nethernet
     paths:
       - Dockerfile
       - Dockerfile.combined-entrypoint.sh
